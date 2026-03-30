@@ -1,3 +1,4 @@
 build/YogiBrowser-Linux-1.0.0.AppImage filter=lfs diff=lfs merge=lfs -text
 build/linux-unpacked/resources/app.asar filter=lfs diff=lfs merge=lfs -text
 build/linux-unpacked/yogi-browser filter=lfs diff=lfs merge=lfs -text
+build/mac/Electron.app/Contents/Resources/app.asar filter=lfs diff=lfs merge=lfs -text
