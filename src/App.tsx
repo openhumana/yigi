@@ -337,6 +337,7 @@ const PlanCard = ({ planId, tasks, onApprove, autoPilotOn }: {
 }) => {
   const doneCount = tasks.filter((t: any) => t.status === 'done').length
   const allDone = doneCount === tasks.length && tasks.length > 0
+  const anyRunning = tasks.some((t: any) => t.status === 'running')
 
   return (
     <div className="plan-card">
@@ -359,7 +360,13 @@ const PlanCard = ({ planId, tasks, onApprove, autoPilotOn }: {
             </div>
             <div className="plan-task-ctrl">
               {(t.status == null || t.status === 'pending') && !autoPilotOn && (
-                <button type="button" className="approve-btn" onClick={() => onApprove(planId, t.id)}>
+                <button
+                  type="button"
+                  className="approve-btn"
+                  disabled={anyRunning}
+                  title={anyRunning ? 'Wait for the current task to complete' : undefined}
+                  onClick={() => onApprove(planId, t.id)}
+                >
                   <ShieldCheck size={12} style={{ marginRight: 4 }} />Approve
                 </button>
               )}
@@ -369,9 +376,9 @@ const PlanCard = ({ planId, tasks, onApprove, autoPilotOn }: {
               {t.status === 'running' && (
                 <span className="plan-badge running"><RotateCw size={11} className="spin" style={{ marginRight: 3 }} />Running</span>
               )}
-              {t.status === 'done' && <span className="plan-badge done"><CheckCircle size={12} /></span>}
-              {t.status === 'failed' && <span className="plan-badge failed"><XCircle size={12} /></span>}
-              {t.status === 'skipped' && <span className="plan-badge skipped"><Pause size={11} /></span>}
+              {t.status === 'done' && <span className="plan-badge done"><CheckCircle size={12} style={{ marginRight: 3 }} />Done</span>}
+              {t.status === 'failed' && <span className="plan-badge failed"><XCircle size={12} style={{ marginRight: 3 }} />Failed</span>}
+              {t.status === 'skipped' && <span className="plan-badge skipped"><Pause size={11} style={{ marginRight: 3 }} />Skipped</span>}
             </div>
           </div>
         ))}

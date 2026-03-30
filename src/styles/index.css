@@ -365,6 +365,12 @@ body {
 .approve-btn:active {
   transform: scale(0.96);
 }
+.approve-btn:disabled {
+  background: rgba(16, 185, 129, 0.25);
+  color: rgba(255,255,255,0.4);
+  box-shadow: none;
+  cursor: not-allowed;
+}
 
 /* ══════════════════════════════════════════
    CHAT INPUT
