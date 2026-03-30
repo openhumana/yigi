@@ -1,0 +1,42 @@
+Fix the browser viewport blank/white screen issue in this app. Here is the exact cause and the exact fix needed:
+ROOT CAUSE:
+The app uses an <iframe> to show websites. When a URL is loaded, it goes through a server-side proxy at /__proxy?url=... defined in vite.config.ts. The proxy fetches the HTML server-side and rewrites it.
+The problem is Reddit (and most real sites) load their page content via JavaScript after the initial HTML loads. The proxy only fetches and returns the initial HTML shell — but all the actual content (posts, images, etc.) is loaded by JavaScript that makes additional fetch/XHR requests directly from the browser. Those sub-requests from inside the iframe go to reddit.com directly (not through the proxy), and Reddit blocks them because the requests lack proper cookies/auth headers. This causes the iframe to show only the top nav bar (which is in the initial HTML) and a blank white area below (where JS-rendered content would be).
+THE FIX — make these two changes:
+1. In vite.config.ts, add 'set-cookie' and 'strict-transport-security' to the STRIP_HEADERS set, and add these two new headers to the permissiveHeaders object so the iframe has full permissions:
+Find this block:
+jsconst permissiveHeaders = {
+  ...outHeaders,
+  'content-type': 'text/html; charset=utf-8',
+  'content-security-policy': "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
+}
+Replace it with:
+jsconst permissiveHeaders = {
+  ...outHeaders,
+  'content-type': 'text/html; charset=utf-8',
+  'content-security-policy': "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
+  'permissions-policy': '',
+  'cross-origin-resource-policy': 'cross-origin',
+  'cross-origin-embedder-policy': 'unsafe-none',
+  'cross-origin-opener-policy': 'unsafe-none',
+}
+2. In src/App.tsx, find the <iframe> element (around line 1090) and add a sandbox attribute with full permissions and a referrerpolicy:
+Find:
+tsx<iframe
+  ref={webviewRef}
+  src={url}
+  style={{ width: '100%', height: '100%', border: 'none' }}
+  title="Yogi Browser Viewport"
+Replace with:
+tsx<iframe
+  ref={webviewRef}
+  src={url}
+  style={{ width: '100%', height: '100%', border: 'none' }}
+  title="Yogi Browser Viewport"
+  sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-modals"
+  referrerPolicy="no-referrer-when-downgrade"
+3. Also in src/App.tsx, change the default URL from Google to a site that works better with the proxy. Find:
+tsconst DEFAULT_URL = 'https://www.google.com'
+Replace with:
+tsconst DEFAULT_URL = 'https://www.reddit.com/r/sales/'
+After making these changes, run npm run dev to test. The iframe should now show Reddit content properly instead of a blank white area.
