@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { app, BrowserWindow, shell, ipcMain, NativeImage, Notification } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, NativeImage, Notification, Menu, session } from 'electron'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import fs from 'fs'
@@ -9,10 +9,23 @@ import { humanInteraction } from './human_interaction'
 import { validateAction, detectCaptcha, detectSensitiveAction, type BrowserSnapshot, type ActionContext } from './validator'
 import { analyzeScreenshot } from './vision'
 
+// ── Mac / Apple Silicon compatibility flags ────────────────────────────────
+// Must be set BEFORE app is ready
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('disable-gpu-sandbox')
+}
+
+// ── Path resolution ────────────────────────────────────────────────────────
+// Use app.getAppPath() for reliable resolution inside .asar packages
 process.env.DIST_ELECTRON = join(__dirname, '../')
-process.env.DIST = join(process.env.DIST_ELECTRON, '../dist')
+process.env.DIST = app.isPackaged
+  ? join(app.getAppPath(), 'dist')
+  : join(__dirname, '../../dist')
 process.env.PUBLIC = process.env.VITE_DEV_SERVER_URL
-  ? join(process.env.DIST_ELECTRON, '../public')
+  ? join(__dirname, '../../public')
   : process.env.DIST
 
 if (release().startsWith('6.1')) app.disableHardwareAcceleration()
@@ -25,7 +38,9 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win: BrowserWindow | null = null
-const preloadPath = join(__dirname, '../preload/index.js')
+const preloadPath = app.isPackaged
+  ? join(app.getAppPath(), 'dist-electron', 'preload', 'index.js')
+  : join(__dirname, '../preload/index.js')
 
 const url = process.env.VITE_DEV_SERVER_URL
 const indexHtml = join(process.env.DIST, 'index.html')
@@ -35,27 +50,103 @@ async function createWindow() {
     title: 'Yogi Browser',
     width: 1440,
     height: 900,
-    icon: join(process.env.PUBLIC || '', 'favicon.ico'),
+    minWidth: 900,
+    minHeight: 600,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: preloadPath,
       nodeIntegration: true,
       contextIsolation: false,
       webviewTag: true,
       devTools: true,
+      webSecurity: false,
+      allowRunningInsecureContent: true,
+      spellcheck: false,
     },
   })
 
+  // ── Mac: remove default menu bar ────────────────────────────────────────
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' },
+        ],
+      },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'reload' },
+          { role: 'forceReload' },
+          { type: 'separator' },
+          { role: 'resetZoom' },
+          { role: 'zoomIn' },
+          { role: 'zoomOut' },
+          { type: 'separator' },
+          { role: 'togglefullscreen' },
+        ],
+      },
+      {
+        label: 'Window',
+        submenu: [
+          { role: 'minimize' },
+          { role: 'zoom' },
+          { type: 'separator' },
+          { role: 'front' },
+        ],
+      },
+    ]))
+  } else {
+    Menu.setApplicationMenu(null)
+  }
+
+  // ── Mac: grant all permissions for webview automation ───────────────────
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(true)
+  })
+  session.defaultSession.setPermissionCheckHandler(() => true)
+
   win.webContents.on('render-process-gone', (event, details) => {
     console.error('[Main] Renderer process gone:', details)
+    if (details.reason !== 'clean-exit') {
+      setTimeout(() => { if (win) win.reload() }, 1000)
+    }
+  })
+
+  win.webContents.on('did-fail-load', (e, errorCode, errorDescription) => {
+    console.error(`[Main] Failed to load: ${errorCode} - ${errorDescription}`)
+    console.error('[Main] Attempted path:', indexHtml)
+    console.error('[Main] DIST:', process.env.DIST)
+    console.error('[Main] isPackaged:', app.isPackaged)
+    console.error('[Main] appPath:', app.getAppPath())
   })
 
   if (url) {
-    console.log(`[Main] Connecting to Dev Server: ${url}`)
+    console.log(`[Main] Dev mode: connecting to ${url}`)
     win.loadURL(url)
-    win.webContents.on('did-fail-load', (e, errorCode, errorDescription) => {
-      console.error(`[Main] Failed to load URL: ${errorCode} - ${errorDescription}`)
-    })
   } else {
+    console.log(`[Main] Production: loading ${indexHtml}`)
     win.loadFile(indexHtml)
   }
 

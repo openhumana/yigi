@@ -37,10 +37,16 @@ mac:
   identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
+  darkModeSupport: true
+  extendInfo:
+    NSCameraUsageDescription: Yogi Browser uses the camera for automation tasks.
+    NSMicrophoneUsageDescription: Yogi Browser uses the microphone for automation tasks.
+    NSScreenCaptureDescription: Yogi Browser captures the screen for AI automation.
+    NSAppleEventsUsageDescription: Yogi Browser uses Apple Events for automation.
   target:
     - target: zip
-      arch: [x64, arm64]
-  artifactName: YogiBrowser-Mac-${version}.${ext}
+      arch: [arm64]
+  artifactName: YogiBrowser-Mac-${version}-arm64.${ext}
 
 linux:
   icon: resources/icon.png
