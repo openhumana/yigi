@@ -276,11 +276,129 @@ const ChatBubble = ({ message, role, model }: { message: string, role: 'agent' |
 )
 
 // ──────────────────────────────────────────────
+// ThinkingBlock: inline collapsible reasoning block
+// ──────────────────────────────────────────────
+const ThinkingBlock = ({ logs, logsStart, status, summary }: {
+  logs: string[]
+  logsStart: number
+  status: 'thinking' | 'done'
+  summary?: string
+}) => {
+  const [expanded, setExpanded] = useState(true)
+  const logsRef = useRef<HTMLDivElement>(null)
+  const myLogs = logs.slice(logsStart)
+
+  useEffect(() => {
+    if (status === 'done') setExpanded(false)
+  }, [status])
+
+  useEffect(() => {
+    if (expanded && logsRef.current) {
+      logsRef.current.scrollTop = logsRef.current.scrollHeight
+    }
+  }, [myLogs.length, expanded])
+
+  return (
+    <div className={`thinking-block ${status}`}>
+      <button type="button" className="thinking-block-header" onClick={() => setExpanded(v => !v)}>
+        <span className={`thinking-block-dot ${status === 'thinking' ? 'pulse' : ''}`} />
+        <span className="thinking-block-title">
+          {status === 'thinking' ? 'Thinking…' : 'Thought process'}
+        </span>
+        {status === 'done' && summary && (
+          <span className="thinking-block-summary">{summary.length > 55 ? summary.slice(0, 55) + '…' : summary}</span>
+        )}
+        <ChevronDown size={12} className={`thinking-block-chevron ${expanded ? 'open' : ''}`} />
+      </button>
+      {expanded && myLogs.length > 0 && (
+        <div className="thinking-block-logs" ref={logsRef}>
+          {myLogs.map((log, i) => (
+            <div key={i} className="thinking-block-log-line">
+              <span className="thinking-log-prefix">&gt;</span>
+              {log}
+            </div>
+          ))}
+          {status === 'thinking' && <div className="thinking-cursor-line"><span className="thinking-cursor" /></div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────
+// PlanCard: inline per-task approval card
+// ──────────────────────────────────────────────
+const PlanCard = ({ planId, tasks, onApprove, autoPilotOn }: {
+  planId: string
+  tasks: any[]
+  onApprove: (planId: string, taskId: string) => void
+  autoPilotOn: boolean
+}) => {
+  const doneCount = tasks.filter((t: any) => t.status === 'done').length
+  const allDone = doneCount === tasks.length && tasks.length > 0
+
+  return (
+    <div className="plan-card">
+      <div className="plan-card-header">
+        <span className="plan-card-title">Plan</span>
+        <span className="plan-card-count">{doneCount}/{tasks.length} done</span>
+        {autoPilotOn && !allDone && <span className="plan-auto-pill">AUTO</span>}
+      </div>
+      <div className="plan-card-tasks">
+        {tasks.map((t: any, i: number) => (
+          <div key={t.id} className={`plan-task plan-task-${t.status || 'pending'}`}>
+            <div className="plan-task-num">{i + 1}</div>
+            <div className="plan-task-body">
+              <span className="plan-task-action">{(t.action || '').replace('dom_', '').toUpperCase()}</span>
+              <div className="plan-task-desc">{t.description}</div>
+              {t.payload?.selector && <code className="task-selector">{t.payload.selector}</code>}
+              {t.confidence != null && (
+                <span className="plan-task-conf">{t.confidence}% confidence</span>
+              )}
+            </div>
+            <div className="plan-task-ctrl">
+              {(t.status == null || t.status === 'pending') && !autoPilotOn && (
+                <button type="button" className="approve-btn" onClick={() => onApprove(planId, t.id)}>
+                  <ShieldCheck size={12} style={{ marginRight: 4 }} />Approve
+                </button>
+              )}
+              {(t.status == null || t.status === 'pending') && autoPilotOn && (
+                <span className="plan-badge auto">AUTO</span>
+              )}
+              {t.status === 'running' && (
+                <span className="plan-badge running"><RotateCw size={11} className="spin" style={{ marginRight: 3 }} />Running</span>
+              )}
+              {t.status === 'done' && <span className="plan-badge done"><CheckCircle size={12} /></span>}
+              {t.status === 'failed' && <span className="plan-badge failed"><XCircle size={12} /></span>}
+              {t.status === 'skipped' && <span className="plan-badge skipped"><Pause size={11} /></span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────
+// InlineErrorBlock: retry/problem notification
+// ──────────────────────────────────────────────
+const InlineErrorBlock = ({ what, retry }: { what: string; retry: string }) => (
+  <div className="inline-error-block">
+    <div className="inline-error-header">
+      <AlertTriangle size={13} />
+      <span>Problem encountered</span>
+    </div>
+    <div className="inline-error-what">{what}</div>
+    {retry && <div className="inline-error-retry">→ {retry}</div>}
+  </div>
+)
+
+// ──────────────────────────────────────────────
 // Main App
 // ──────────────────────────────────────────────
 const App = () => {
   const [messages, setMessages] = useState<any[]>([
-    { role: 'agent', message: '🚀 Yogi is online. Ready to automate Open Humana sales. How can I help?' }
+    { id: 'init', type: 'message', role: 'agent', message: '🚀 Yogi is online. Ready to automate Open Humana sales. How can I help?' }
   ])
   const [input, setInput] = useState('')
   const [tasks, setTasks] = useState<any[]>([])
@@ -861,8 +979,14 @@ const App = () => {
   const [thinkingLogs, setThinkingLogs] = useState<string[]>(
     JSON.parse(localStorage.getItem('thinkingLogs') || '[]')
   )
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
-  const logsEndRef = useRef<any>(null)
+
+  // Refs for tracking inline thinking/plan message IDs
+  const thinkingMsgIdRef = useRef<string>('')
+  const thinkingLogsLenRef = useRef<number>(0)
+  const currentPlanMsgIdRef = useRef<string>('')
+
+  // Keep thinkingLogsLenRef in sync
+  useEffect(() => { thinkingLogsLenRef.current = thinkingLogs.length }, [thinkingLogs])
 
   useEffect(() => {
     if (isElectron) {
@@ -876,10 +1000,6 @@ const App = () => {
       })
     }
   }, [])
-
-  useEffect(() => {
-    if (isDrawerOpen) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [thinkingLogs, isDrawerOpen])
 
   // Keep isThinkingRef in sync so the unified applyBrowserBounds callback
   // always reads the latest value without needing to be recreated.
@@ -933,9 +1053,46 @@ const App = () => {
     if (!input.trim()) return
 
     const currentInput = input.trim()
-    setMessages(prev => [...prev, { role: 'user', message: currentInput }])
+    setMessages(prev => [...prev, { id: `user-${Date.now()}`, type: 'message', role: 'user', message: currentInput }])
     setInput('')
     setIsThinking(true)
+
+    // Push inline thinking block into chat feed
+    const thinkingId = `thinking-${Date.now()}`
+    const logsStart = thinkingLogsLenRef.current
+    thinkingMsgIdRef.current = thinkingId
+    setMessages(prev => [...prev, { id: thinkingId, type: 'thinking', status: 'thinking', logsStart }])
+
+    // Helper to push an inline plan card into chat and optionally set tasks state
+    const pushPlan = (rawTasks: any[], confidence?: number) => {
+      const planId = `plan-${Date.now()}`
+      currentPlanMsgIdRef.current = planId
+      const planTasks = rawTasks.map((t: any, i: number) => ({
+        ...t,
+        id: `task-${Date.now()}-${i}`,
+        confidence: typeof t.confidence === 'number' ? t.confidence : confidence,
+        status: 'pending',
+      }))
+      setMessages(prev => [...prev, { id: planId, type: 'plan', tasks: planTasks }])
+      if (autoPilotRef.current) {
+        setTasks(planTasks)
+      }
+    }
+
+    // Helper to finalize the thinking block and push the agent response
+    const finalizeThinking = (responseText: string, model?: string) => {
+      setMessages(prev => prev.map(m =>
+        m.id === thinkingId ? { ...m, status: 'done', summary: responseText } : m
+      ))
+      thinkingMsgIdRef.current = ''
+      setMessages(prev => [...prev, {
+        id: `msg-${Date.now()}`,
+        type: 'message',
+        role: 'agent',
+        message: responseText,
+        model: model || '',
+      }])
+    }
 
     // Auto-enable Auto-Pilot so commands execute without manual approval
     if (!autoPilotRef.current) {
@@ -983,15 +1140,10 @@ const App = () => {
         logStep(`Generating task queue — ${res.tasks.length} action(s) planned`)
         await sleep(300)
 
-        setMessages(prev => [...prev, { role: 'agent', message: res.thought }])
+        finalizeThinking(res.thought)
 
         if (res.tasks.length > 0) {
-          const responseConfidence = typeof res.confidence === 'number' ? res.confidence : undefined
-          setTasks(res.tasks.map((t: any, i: number) => ({
-            ...t,
-            id: `task-${Date.now()}-${i}`,
-            confidence: typeof t.confidence === 'number' ? t.confidence : responseConfidence,
-          })))
+          pushPlan(res.tasks, typeof res.confidence === 'number' ? res.confidence : undefined)
         }
         return
       }
@@ -1054,19 +1206,18 @@ ${currentInput}`
         }
       }
 
-      setMessages(prev => [...prev, { role: 'agent', message: res.text || 'Done.', model: res.model || '' }])
+      finalizeThinking(res.text || 'Done.', res.model || '')
 
       // ── QUEUE: populate HITL approval queue ────────────
       if (res.tasks && Array.isArray(res.tasks) && res.tasks.length > 0) {
-        const responseConfidence = typeof res.confidence === 'number' ? res.confidence : undefined
-        setTasks(res.tasks.map((t: any, i: number) => ({
-          ...t,
-          id: `task-${Date.now()}-${i}`,
-          confidence: typeof t.confidence === 'number' ? t.confidence : responseConfidence,
-        })))
+        pushPlan(res.tasks, typeof res.confidence === 'number' ? res.confidence : undefined)
       }
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Agent Error: ${e.message}` }])
+      setMessages(prev => prev.map(m =>
+        m.id === thinkingId ? { ...m, status: 'done', summary: `Error: ${(e as any).message}` } : m
+      ))
+      thinkingMsgIdRef.current = ''
+      setMessages(prev => [...prev, { id: `err-${Date.now()}`, type: 'message', role: 'agent', message: `⚠️ Agent Error: ${e.message}` }])
     } finally {
       setIsThinking(false)
     }
@@ -1096,6 +1247,15 @@ ${currentInput}`
       setIsThinking(false)
     }
   }
+
+  // ── Plan task state management ──────────────────────────
+  const updatePlanTask = useCallback((planId: string, taskId: string, status: string) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== planId || m.type !== 'plan') return m
+      return { ...m, tasks: m.tasks.map((t: any) => t.id === taskId ? { ...t, status } : t) }
+    }))
+  }, [])
+
 
   // ── Verification logging helper ─────────────────────────
   const logVerification = (msg: string) => {
@@ -1455,7 +1615,31 @@ ${currentInput}`
     }
   }
 
-  const autoExecuteLoop = useCallback(async (taskQueue: any[]) => {
+  // ── Plan task approval (for inline PlanCard) ────────────
+  const approvePlanTask = useCallback(async (planId: string, taskId: string) => {
+    let task: any = null
+    setMessages(prev => {
+      const msg = prev.find(m => m.id === planId)
+      task = msg?.tasks?.find((t: any) => t.id === taskId)
+      return prev
+    })
+    if (!task) return
+
+    updatePlanTask(planId, taskId, 'running')
+
+    const result = await approveTask(task, (attempt: number, reason: string) => {
+      setMessages(prev => [...prev, {
+        id: `retry-${Date.now()}`,
+        type: 'error',
+        what: `"${task.description}" failed (attempt ${attempt}/${MAX_RETRIES})`,
+        retry: reason,
+      }])
+    })
+
+    updatePlanTask(planId, taskId, result.status === 'success' ? 'done' : 'failed')
+  }, [updatePlanTask])
+
+  const autoExecuteLoop = useCallback(async (taskQueue: any[], planMsgId?: string) => {
     if (autoExecutingRef.current) return
     setAutoExecuting(true)
     sessionStartRef.current = Date.now()
@@ -1530,6 +1714,15 @@ ${currentInput}`
         status: 'running',
       }])
 
+      // Mark task as running in plan card
+      if (planMsgId) {
+        setMessages(prev => prev.map(m =>
+          m.id === planMsgId && m.type === 'plan'
+            ? { ...m, tasks: m.tasks.map((t: any) => t.id === task.id ? { ...t, status: 'running' } : t) }
+            : m
+        ))
+      }
+
       let result: ApproveResult
       try {
         result = await approveTask(task, (attempt, reason) => {
@@ -1554,6 +1747,14 @@ ${currentInput}`
           elapsed,
           retries: result.retries,
         })
+        // Mark task as failed in plan card
+        if (planMsgId) {
+          setMessages(prev => prev.map(m =>
+            m.id === planMsgId && m.type === 'plan'
+              ? { ...m, tasks: m.tasks.map((t: any) => t.id === task.id ? { ...t, status: 'failed' } : t) }
+              : m
+          ))
+        }
         if (!escalation) {
           const escMsg = result.reason || `Action failed: ${task.description}`
           setEscalation({ message: escMsg, taskId: task.id })
@@ -1562,6 +1763,15 @@ ${currentInput}`
         }
         setAutoExecuting(false)
         return
+      }
+
+      // Mark task as done in plan card
+      if (planMsgId) {
+        setMessages(prev => prev.map(m =>
+          m.id === planMsgId && m.type === 'plan'
+            ? { ...m, tasks: m.tasks.map((t: any) => t.id === task.id ? { ...t, status: 'done' } : t) }
+            : m
+        ))
       }
 
       updateExecLog(logId, { status: 'success', elapsed, retries: result.retries })
@@ -1578,7 +1788,7 @@ ${currentInput}`
     if (!autoPilot || tasks.length === 0 || autoExecutingRef.current) return
     const executableTasks = tasks.filter(t => !t.sensitive)
     if (executableTasks.length === 0) return
-    autoExecuteLoop(executableTasks)
+    autoExecuteLoop(executableTasks, currentPlanMsgIdRef.current)
   }, [autoPilot, tasks, autoExecuteLoop])
 
   useEffect(() => {
@@ -1615,7 +1825,7 @@ ${currentInput}`
     setEscalation(null)
     if (autoPilotRef.current && tasks.length > 0) {
       const tasksCopy = [...tasks]
-      autoExecuteLoop(tasksCopy)
+      autoExecuteLoop(tasksCopy, currentPlanMsgIdRef.current)
     }
   }, [tasks, autoExecuteLoop])
 
@@ -1843,38 +2053,44 @@ ${currentInput}`
           <>
             {/* ── Chat feed ── */}
             <div className="chat-feed" ref={chatFeedRef}>
-              {messages.map((m, i) => (
-                <ChatBubble key={i} message={m.message} role={m.role} model={m.model} />
-              ))}
-
-              {isThinking && (
-                <div className="chat-bubble agent thinking" onClick={() => setIsDrawerOpen(true)}>
-                  <div className="thinking-label">YOGI IS PROCESSING…</div>
-                  <div className="thinking-status">{thinkingLog}</div>
-                </div>
-              )}
+              {messages.map((m, i) => {
+                const msgType = m.type || 'message'
+                if (msgType === 'thinking') {
+                  return (
+                    <ThinkingBlock
+                      key={m.id || i}
+                      logs={thinkingLogs}
+                      logsStart={m.logsStart || 0}
+                      status={m.status || 'thinking'}
+                      summary={m.summary}
+                    />
+                  )
+                }
+                if (msgType === 'plan') {
+                  return (
+                    <PlanCard
+                      key={m.id || i}
+                      planId={m.id}
+                      tasks={m.tasks || []}
+                      onApprove={approvePlanTask}
+                      autoPilotOn={autoPilot}
+                    />
+                  )
+                }
+                if (msgType === 'error') {
+                  return (
+                    <InlineErrorBlock
+                      key={m.id || i}
+                      what={m.what || ''}
+                      retry={m.retry || ''}
+                    />
+                  )
+                }
+                return (
+                  <ChatBubble key={m.id || i} message={m.message} role={m.role} model={m.model} />
+                )
+              })}
             </div>
-
-            {/* ── Technical log drawer ── */}
-            {isDrawerOpen && (
-              <div className="thinking-drawer">
-                <div className="drawer-header">
-                  <h3>Process Log</h3>
-                  <button
-                    onClick={() => setIsDrawerOpen(false)}
-                    style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-                <div className="drawer-logs">
-                  {thinkingLogs.map((log, i) => (
-                    <div key={i} className="log-line">{log}</div>
-                  ))}
-                  <div ref={logsEndRef} />
-                </div>
-              </div>
-            )}
 
             {/* ── Execution Log Panel ── */}
             {executionLog.length > 0 && (
@@ -1914,34 +2130,6 @@ ${currentInput}`
               </div>
             )}
 
-            {/* ── HITL Approval Queue ── */}
-            {tasks.length > 0 && (
-              <div className="task-queue">
-                <div className="task-queue-label">
-                  {autoPilot ? 'AUTO-EXECUTING' : 'HITL APPROVAL QUEUE'} ({tasks.length})
-                </div>
-                {tasks.map(t => (
-                  <div key={t.id} className={`task-card ${autoPilot && !t.sensitive ? 'auto-task' : ''}`}>
-                    <div className="task-card-header">
-                      <span className="task-action">{t.action.replace('dom_', '').toUpperCase()}</span>
-                      {(!autoPilot || t.sensitive) && (
-                        <button className="approve-btn" onClick={() => approveTask(t.id)}>
-                          <ShieldCheck size={13} style={{ marginRight: '5px' }} />
-                          Approve
-                        </button>
-                      )}
-                      {autoPilot && !t.sensitive && (
-                        <span className="auto-badge">AUTO</span>
-                      )}
-                    </div>
-                    <p className="task-desc">{t.description}</p>
-                    {t.payload?.selector && (
-                      <code className="task-selector">{t.payload.selector}</code>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
 
             {/* ── Chat input ── */}
             <div className="chat-input-container">
