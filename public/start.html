@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Yogi Browser</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: #0f0f12;
+    color: #f0f0f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+    width: 100%;
+    max-width: 560px;
+    padding: 0 24px;
+  }
+  .logo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .logo-text {
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: -2px;
+    background: linear-gradient(135deg, #fff 0%, #8ab4ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .logo-sub {
+    font-size: 13px;
+    color: #94949e;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+  form { width: 100%; }
+  input[type="text"] {
+    width: 100%;
+    height: 46px;
+    background: #1a1a22;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 23px;
+    padding: 0 20px;
+    color: #f0f0f0;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  input[type="text"]:focus {
+    border-color: rgba(82,134,255,0.5);
+    box-shadow: 0 0 0 3px rgba(82,134,255,0.12);
+  }
+  input[type="text"]::placeholder { color: #55555e; }
+  .links {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    width: 100%;
+  }
+  .link-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    background: #16161a;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 16px 8px 12px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    color: inherit;
+    text-decoration: none;
+  }
+  .link-btn:hover {
+    background: #1e1e26;
+    border-color: rgba(255,255,255,0.12);
+  }
+  .link-icon { font-size: 22px; }
+  .link-label { font-size: 11px; color: #94949e; text-align: center; }
+</style>
+</head>
+<body>
+<div class="inner">
+  <div class="logo">
+    <span class="logo-text">Yogi</span>
+    <span class="logo-sub">Browser</span>
+  </div>
+
+  <form id="search-form">
+    <input id="search-input" type="text" autofocus placeholder="Search or enter a URL…" />
+  </form>
+
+  <div class="links">
+    <a class="link-btn" href="https://duckduckgo.com">
+      <span class="link-icon">🦆</span>
+      <span class="link-label">DuckDuckGo</span>
+    </a>
+    <a class="link-btn" href="https://en.wikipedia.org">
+      <span class="link-icon">📖</span>
+      <span class="link-label">Wikipedia</span>
+    </a>
+    <a class="link-btn" href="https://news.ycombinator.com">
+      <span class="link-icon">🔶</span>
+      <span class="link-label">Hacker News</span>
+    </a>
+    <a class="link-btn" href="https://github.com">
+      <span class="link-icon">🐙</span>
+      <span class="link-label">GitHub</span>
+    </a>
+  </div>
+</div>
+<script>
+  document.getElementById('search-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var q = document.getElementById('search-input').value.trim();
+    if (!q) return;
+    if (/^https?:\/\//.test(q) || /^[a-z0-9-]+(\.[a-z]{2,})/.test(q)) {
+      window.location.href = q.startsWith('http') ? q : 'https://' + q;
+    } else {
+      window.location.href = 'https://duckduckgo.com/?q=' + encodeURIComponent(q);
+    }
+  });
+</script>
+</body>
+</html>

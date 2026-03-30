@@ -326,8 +326,20 @@ function applyBrowserBounds(bounds: { x: number; y: number; width: number; heigh
   browserView.setBounds({ x: Math.round(bounds.x), y: Math.round(bounds.y), width: w, height: h })
 }
 
+// Sentinel value used by the renderer to indicate the home page
+const HOME_SENTINEL = 'yogi://home'
+
+// Resolve the home sentinel to the local start.html for Electron's BrowserView
+function resolveNavigationUrl(targetUrl: string): string {
+  if (targetUrl === HOME_SENTINEL) {
+    return `file://${join(process.env.PUBLIC ?? '', 'start.html')}`
+  }
+  return targetUrl
+}
+
 ipcMain.handle('browser-navigate', (_, { url: targetUrl }: { url: string }) => {
   if (!win) return
+
   if (!browserView) {
     browserView = new BrowserView({
       webPreferences: {
@@ -339,6 +351,8 @@ ipcMain.handle('browser-navigate', (_, { url: targetUrl }: { url: string }) => {
       },
     })
     win.addBrowserView(browserView)
+    // Start off-screen so we never flash at position 0,0 before valid bounds arrive
+    browserView.setBounds({ x: -10000, y: -10000, width: 100, height: 100 })
     browserView.webContents.session.setPermissionRequestHandler((_wc, _perm, callback) => callback(true))
     browserView.webContents.on('did-navigate', (_e: any, navigatedUrl: string) => {
       win?.webContents.send('browser-url-changed', navigatedUrl)
@@ -351,13 +365,15 @@ ipcMain.handle('browser-navigate', (_, { url: targetUrl }: { url: string }) => {
         win?.webContents.send('browser-load-failed', { errorCode: code, errorDescription: desc })
       }
     })
-    // Apply any bounds that arrived before the BrowserView was created
-    if (pendingBounds) {
+    // Apply any bounds that arrived before the BrowserView was created, but only
+    // if they are valid (non-zero) so we don't accidentally reveal the view early.
+    if (pendingBounds && pendingBounds.width > 0 && pendingBounds.height > 0) {
       applyBrowserBounds(pendingBounds)
-      pendingBounds = null
     }
+    pendingBounds = null
   }
-  browserView.webContents.loadURL(targetUrl, {
+
+  browserView.webContents.loadURL(resolveNavigationUrl(targetUrl), {
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
   })
 })

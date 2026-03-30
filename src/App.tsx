@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X, Rocket, Play, Pause, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, XCircle, Target, BookOpen, Square } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X, Rocket, Play, Pause, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, XCircle, Target, BookOpen, Square, Home } from 'lucide-react'
 import { Mission, Skill } from './types/mission'
 import { DEFAULT_SKILLS } from './data/skills'
 import MissionEditor from './components/MissionEditor'
 import SkillsLibrary from './components/SkillsLibrary'
 import OnboardingScreen from './components/OnboardingScreen'
+import BrowserHomePage from './components/BrowserHomePage'
 import { useMissionRunner } from './hooks/useMissionRunner'
 
 // Detect Electron: window.yogi is set by the preload bridge at startup
@@ -309,9 +310,9 @@ const App = () => {
   // Browser state
   // In web mode all pages go through the /__proxy endpoint (strips X-Frame-Options)
   const proxyUrl = (target: string) => `/__proxy?url=${encodeURIComponent(target)}`
-  const DEFAULT_URL = 'https://www.reddit.com/r/sales/'
-  const [url, setUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : proxyUrl(DEFAULT_URL))
-  const [inputUrl, setInputUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : DEFAULT_URL)
+  const HOME_URL = 'yogi://home'
+  const [url, setUrl] = useState(HOME_URL)
+  const [inputUrl, setInputUrl] = useState('')
 
   // Real DOM elements reported by the Yogi bridge script inside the proxy iframe
   const proxyElementsRef = useRef<any[]>([])
@@ -391,13 +392,22 @@ const App = () => {
     if (viewportRef.current) ro.observe(viewportRef.current)
     // Also re-send on window resize (covers maximize/restore)
     window.addEventListener('resize', sendBounds)
-    // Initial send with a short delay to let layout settle after maximize
-    sendBounds()
-    const t = setTimeout(sendBounds, 200)
+    // Delay the initial bounds read with two chained rAFs + 500ms safety timeout
+    // so the bounds are only sent after win.maximize() has fully completed and
+    // the React flex layout has settled. This prevents the 0,0 flash.
+    let raf1: number, raf2: number
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        sendBounds()
+      })
+    })
+    const t = setTimeout(sendBounds, 500)
 
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', sendBounds)
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
       clearTimeout(t)
     }
   }, [isElectron])
@@ -407,6 +417,8 @@ const App = () => {
     if (!isElectron) return
     const yogi = (window as any).yogi
     yogi?.onBrowserUrlChanged?.((newUrl: string) => {
+      // Ignore the file:// URL from start.html — the UI state stays at HOME_URL
+      if (newUrl.includes('start.html') && newUrl.startsWith('file://')) return
       setUrl(newUrl)
       setInputUrl(newUrl)
     })
@@ -418,11 +430,13 @@ const App = () => {
   }, [isElectron])
 
   // ── BrowserView: initial page load ──────────────────────────────────────
+  // Navigate to the home sentinel on startup. In the main process this resolves
+  // to file://...public/start.html which loads instantly without any network request.
   useEffect(() => {
     if (!isElectron) return
     const yogi = (window as any).yogi
     if (yogi?.browserNavigate) {
-      yogi.browserNavigate('https://www.reddit.com/r/sales/')
+      yogi.browserNavigate(HOME_URL)
     }
   }, [isElectron])
 
@@ -1534,12 +1548,27 @@ ${currentInput}`
   }, [tasks, autoExecuteLoop])
 
   // ── Browser controls ─────────────────────────────────────
+  const goHome = () => {
+    setUrl(HOME_URL)
+    setInputUrl('')
+    // In Electron: load start.html via the home sentinel so BrowserView shows it
+    if (isElectron) {
+      ;(window as any).yogi?.browserNavigate(HOME_URL)
+    }
+  }
+
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     let targetUrl = inputUrl.trim()
+    // Empty bar → go home
+    if (!targetUrl) {
+      goHome()
+      return
+    }
     if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`
     setInputUrl(targetUrl)
     if (isElectron) {
+      setUrl(targetUrl)
       ;(window as any).yogi?.browserNavigate(targetUrl)
     } else {
       const next = proxyUrl(targetUrl)
@@ -1848,6 +1877,7 @@ ${currentInput}`
             <button onClick={goBack} className="nav-btn" title="Back"><ChevronLeft size={20} /></button>
             <button onClick={goForward} className="nav-btn" title="Forward"><ChevronRight size={20} /></button>
             <button onClick={reload} className="nav-btn" title="Reload"><RotateCw size={18} /></button>
+            <button onClick={goHome} className="nav-btn" title="Home"><Home size={17} /></button>
           </div>
           <form className="address-bar-container" onSubmit={handleUrlSubmit}>
             <input
@@ -1862,8 +1892,18 @@ ${currentInput}`
           {isElectron ? (
             // Electron: BrowserView rendered by the main process at these bounds.
             // This div is a transparent placeholder — the main process positions
-            // the BrowserView to exactly cover it. No <webview> tag needed.
+            // the BrowserView to exactly cover it (including start.html for home).
             null
+          ) : url === HOME_URL ? (
+            // Web preview + home sentinel: show the React home page component
+            <BrowserHomePage onNavigate={(target) => {
+              setInputUrl(target)
+              const next = proxyUrl(target)
+              setUrl(next)
+              proxyElementsRef.current = []
+              setProxyElements([])
+              if (webviewRef.current) webviewRef.current.src = next
+            }} />
           ) : (
             // Web preview: regular iframe
             <iframe
