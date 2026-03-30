@@ -334,6 +334,7 @@ const App = () => {
   }, [])
 
   const webviewRef = useRef<any>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<any>(null)
   const chatFeedRef = useRef<any>(null)
 
@@ -368,6 +369,33 @@ const App = () => {
       window.removeEventListener('mouseup', stopResizing)
     }
   }, [isResizing, resize, stopResizing])
+
+  // ── Webview size: explicitly match the container in pixels ──────────────
+  // Electron's <webview> ignores CSS percentage heights for its internal
+  // Chromium renderer. We use ResizeObserver to push explicit pixel dimensions.
+  useEffect(() => {
+    if (!isElectron) return
+    const container = viewportRef.current
+    if (!container) return
+    const applySize = () => {
+      const wv = webviewRef.current
+      if (!wv) return
+      const { width, height } = container.getBoundingClientRect()
+      if (width > 0 && height > 0) {
+        wv.style.width = `${width}px`
+        wv.style.height = `${height}px`
+        wv.style.position = 'absolute'
+        wv.style.top = '0'
+        wv.style.left = '0'
+      }
+    }
+    const ro = new ResizeObserver(applySize)
+    ro.observe(container)
+    // Also apply once on first render and again after a short delay
+    applySize()
+    const t = setTimeout(applySize, 300)
+    return () => { ro.disconnect(); clearTimeout(t) }
+  }, [isElectron])
 
   // ── Settings ────────────────────────────────────────────
   useEffect(() => {
@@ -1808,7 +1836,7 @@ ${currentInput}`
           </form>
         </div>
 
-        <div className="browser-viewport">
+        <div className="browser-viewport" ref={viewportRef}>
           {isElectron ? (
             // Electron: native webview tag with full access to webContents
             <webview
