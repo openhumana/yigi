@@ -165,6 +165,20 @@ export const MISSION_TEMPLATES: Mission[] = [
         type: 'action',
         dependsOn: ['cr-5'],
       }),
+      createMissionTask({
+        id: 'cr-7',
+        description: 'Capture a screenshot of the pricing page for reference. Summarize key pricing tiers and their differentiators.',
+        successCriteria: 'Screenshot captured or pricing summary generated',
+        type: 'action',
+        dependsOn: ['cr-3'],
+      }),
+      createMissionTask({
+        id: 'cr-8',
+        description: 'Compile a structured competitive analysis summary including: company name, pricing tiers with prices, key features, unique selling points, blog/content themes, and any free trial or demo offers found. Format as a clear bulleted report.',
+        successCriteria: 'Summary report has been generated with pricing, features, and key findings',
+        type: 'action',
+        dependsOn: ['cr-3', 'cr-4', 'cr-6', 'cr-7'],
+      }),
     ],
   }),
 ]

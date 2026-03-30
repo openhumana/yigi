@@ -620,6 +620,10 @@ const App = () => {
     setResumeBanner(null)
     setActiveMission(mission)
     setSidePanel('chat')
+    if (!autoPilotRef.current) {
+      setAutoPilot(true)
+      autoPilotRef.current = true
+    }
     missionRunner.resumeMission(mission)
   }, [missionRunner])
 
@@ -631,6 +635,10 @@ const App = () => {
   const handleRunMission = useCallback((mission: Mission) => {
     setActiveMission(mission)
     setSidePanel('chat')
+    if (!autoPilotRef.current) {
+      setAutoPilot(true)
+      autoPilotRef.current = true
+    }
     missionRunner.runMission(mission)
   }, [missionRunner])
 
