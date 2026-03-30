@@ -287,6 +287,9 @@ const App = () => {
   const [workflow, setWorkflow] = useState('reddit_post')
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<any>({})
+  const [geminiKeyStatus, setGeminiKeyStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [geminiKeyError, setGeminiKeyError] = useState('')
+  const [quotas, setQuotas] = useState<any>(null)
   const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
 
@@ -734,7 +737,7 @@ const App = () => {
         const res = await (window as any).yogi.sendChatMessage(contextPrompt, 'high', workflow, settings)
         if (res.text) {
           responseText = res.text
-          setMessages(prev => [...prev, { role: 'agent', message: res.text }])
+          setMessages(prev => [...prev, { role: 'agent', message: res.text, model: res.model || '' }])
         }
         if (res.tasks?.length) {
           setTasks(res.tasks.map((t: any, i: number) => ({
@@ -2038,13 +2041,38 @@ ${currentInput}`
                 />
               </div>
               <div className="settings-field">
-                <label>Google Gemini API Key</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  Google Gemini API Key
+                  {geminiKeyStatus === 'ok' && <span style={{ color: '#10b981', fontSize: '11px', fontWeight: 700 }}>✓ Valid</span>}
+                  {geminiKeyStatus === 'fail' && <span style={{ color: '#ef4444', fontSize: '11px', fontWeight: 700 }}>✗ {geminiKeyError}</span>}
+                </label>
                 <textarea
                   rows={2}
                   value={settings.GOOGLE_KEYS || ''}
-                  onChange={(e) => setSettings((s: any) => ({ ...s, GOOGLE_KEYS: e.target.value }))}
+                  onChange={(e) => { setSettings((s: any) => ({ ...s, GOOGLE_KEYS: e.target.value })); setGeminiKeyStatus('idle') }}
                   placeholder="AIza... (get from Google AI Studio — aistudio.google.com)"
                 />
+                {isElectron && (
+                  <button
+                    className="approve-btn"
+                    style={{ marginTop: '6px', fontSize: '11px', padding: '5px 12px', opacity: geminiKeyStatus === 'testing' ? 0.6 : 1 }}
+                    disabled={geminiKeyStatus === 'testing' || !settings.GOOGLE_KEYS}
+                    onClick={async () => {
+                      setGeminiKeyStatus('testing')
+                      setGeminiKeyError('')
+                      const key = (settings.GOOGLE_KEYS || '').split(/[\n,]/)[0].trim()
+                      const result = await (window as any).yogi.testGeminiKey(key)
+                      if (result.ok) {
+                        setGeminiKeyStatus('ok')
+                      } else {
+                        setGeminiKeyStatus('fail')
+                        setGeminiKeyError(result.error || 'Failed')
+                      }
+                    }}
+                  >
+                    {geminiKeyStatus === 'testing' ? 'Testing...' : 'Test Key'}
+                  </button>
+                )}
               </div>
               <div className="settings-field">
                 <label>Model Strategy</label>
@@ -2059,6 +2087,44 @@ ${currentInput}`
                 <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
                   Quality mode uses Gemini Pro for Reddit posts and planning. Requires a Gemini API key.
                 </div>
+              </div>
+              <div className="settings-field">
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Usage Stats</span>
+                  {isElectron && (
+                    <button
+                      className="approve-btn"
+                      style={{ fontSize: '10px', padding: '3px 8px' }}
+                      onClick={async () => {
+                        const q = await (window as any).yogi.getQuotas()
+                        setQuotas(q)
+                      }}
+                    >Refresh</button>
+                  )}
+                </label>
+                {quotas ? (
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    {Object.entries(quotas).map(([provider, data]: [string, any]) => (
+                      <div key={provider} style={{
+                        background: '#111114',
+                        border: '1px solid var(--border)',
+                        borderRadius: '8px',
+                        padding: '8px 12px',
+                        flex: '1',
+                        minWidth: '100px',
+                      }}>
+                        <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', marginBottom: '4px' }}>{provider}</div>
+                        <div style={{ fontSize: '12px', color: '#e8f0ff' }}>{data.totalRequests} reqs</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>~{(data.estimatedTokens / 1000).toFixed(1)}k tokens</div>
+                        <div style={{ fontSize: '10px', color: data.keys?.some((k: any) => k.status === 'active') ? '#10b981' : '#ef4444', marginTop: '3px' }}>
+                          {data.keys?.filter((k: any) => k.status === 'active').length}/{data.keys?.length} keys active
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>Click Refresh to load usage stats</div>
+                )}
               </div>
               <div className="settings-field">
                 <label>OpenAI Keys (one per line)</label>

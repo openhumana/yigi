@@ -294,6 +294,14 @@ ipcMain.handle('get-settings', () => {
   return settings
 })
 
+ipcMain.handle('test-gemini-key', async (_, { apiKey }) => {
+  return orchestrator.testGeminiKey(apiKey)
+})
+
+ipcMain.handle('get-quotas', () => {
+  return orchestrator.getQuotas()
+})
+
 ipcMain.handle('parse-pdf', async (_, { path }) => {
   try {
     const pdf = require('pdf-parse')

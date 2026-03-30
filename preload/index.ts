@@ -24,6 +24,9 @@ const yogi = {
   getQuotas: () => 
     ipcRenderer.invoke('get-quotas'),
 
+  testGeminiKey: (apiKey: string) =>
+    ipcRenderer.invoke('test-gemini-key', { apiKey }),
+
   // Automation Control
   connectBrowser: () => 
     ipcRenderer.invoke('connect-browser'),
