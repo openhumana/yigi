@@ -6,7 +6,7 @@ import fs from 'fs'
 import { orchestrator } from './orchestrator'
 import { sandbox } from './sandbox'
 import { humanInteraction } from './human_interaction'
-import { validateAction, detectCaptcha, detectSensitiveAction, BrowserSnapshot, ActionContext } from './validator'
+import { validateAction, detectCaptcha, detectSensitiveAction, type BrowserSnapshot, type ActionContext } from './validator'
 import { analyzeScreenshot } from './vision'
 
 process.env.DIST_ELECTRON = join(__dirname, '../')
@@ -396,6 +396,16 @@ ipcMain.handle('validate-action', async (_, { action, before }) => {
         validation: { status: 'escalate', reason: 'CAPTCHA detected on page — human intervention required', confidence: 10 },
         after,
         captchaDetected: true,
+      }
+    }
+
+    const sensitive = detectSensitiveAction(after, action as ActionContext)
+    if (sensitive) {
+      return {
+        validation: { status: 'escalate', reason: `Sensitive action detected: ${sensitive}`, confidence: 5 },
+        after,
+        captchaDetected: false,
+        sensitiveDetected: true,
       }
     }
 
