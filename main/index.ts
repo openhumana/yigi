@@ -84,8 +84,10 @@ async function createWindow() {
     console.log(`[Main] Dev mode: connecting to ${url}`)
     win.loadURL(url)
   } else {
-    console.log(`[Main] Production: loading ${indexHtml}`)
-    win.loadFile(indexHtml)
+    // Use explicit file:// URL — more reliable than loadFile() in packaged asar
+    const fileUrl = `file://${indexHtml}`
+    console.log(`[Main] Production: loading ${fileUrl}`)
+    win.loadURL(fileUrl)
   }
 
   win.webContents.on('did-finish-load', () => {
