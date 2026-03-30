@@ -497,7 +497,9 @@ ${currentInput}`
     if (isElectron) {
       webviewRef.current.reload()
     } else {
-      webviewRef.current.contentWindow?.location.reload()
+      // contentWindow.location is cross-origin blocked; reassigning src reloads safely
+      const iframe = webviewRef.current as HTMLIFrameElement
+      iframe.src = iframe.src
     }
   }
 
