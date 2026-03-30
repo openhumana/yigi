@@ -174,6 +174,7 @@ Try: google.com, wikipedia.org, news.ycombinator.com, or any open site.</p>
 }
 
 export default defineConfig({
+  base: './',
   plugins: [
     react(),
     {
