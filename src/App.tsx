@@ -487,9 +487,11 @@ const App = () => {
         setMessages(prev => [...prev, { role: 'agent', message: res.thought }])
 
         if (res.tasks.length > 0) {
+          const responseConfidence = typeof res.confidence === 'number' ? res.confidence : undefined
           setTasks(res.tasks.map((t: any, i: number) => ({
             ...t,
-            id: `task-${Date.now()}-${i}`
+            id: `task-${Date.now()}-${i}`,
+            confidence: typeof t.confidence === 'number' ? t.confidence : responseConfidence,
           })))
         }
         return
@@ -557,9 +559,11 @@ ${currentInput}`
 
       // ── QUEUE: populate HITL approval queue ────────────
       if (res.tasks && Array.isArray(res.tasks) && res.tasks.length > 0) {
+        const responseConfidence = typeof res.confidence === 'number' ? res.confidence : undefined
         setTasks(res.tasks.map((t: any, i: number) => ({
           ...t,
-          id: `task-${Date.now()}-${i}`
+          id: `task-${Date.now()}-${i}`,
+          confidence: typeof t.confidence === 'number' ? t.confidence : responseConfidence,
         })))
       }
     } catch (e: any) {
