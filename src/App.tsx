@@ -169,8 +169,10 @@ const App = () => {
   const [isResizing, setIsResizing] = useState(false)
 
   // Browser state
-  const [url, setUrl] = useState('https://www.reddit.com/r/sales/')
-  const [inputUrl, setInputUrl] = useState('https://www.reddit.com/r/sales/')
+  // In web mode we load a local mock page (external sites block iframes)
+  const mockPageUrl = (wf: string) => `/mock-browser.html?workflow=${wf}`
+  const [url, setUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : mockPageUrl('reddit_post'))
+  const [inputUrl, setInputUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : 'reddit.com/r/sales/')
 
   const webviewRef = useRef<any>(null)
   const sidebarRef = useRef<any>(null)
@@ -265,6 +267,21 @@ const App = () => {
       chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight
     }
   }, [messages, isThinking])
+
+  // ── In web mode: sync iframe to mock page when workflow changes ─────
+  const WORKFLOW_DISPLAY_URLS: Record<string, string> = {
+    reddit_post:  'reddit.com/r/sales/',
+    reddit_reply: 'reddit.com/r/sales/comments/demo',
+    linkedin:     'linkedin.com/feed/',
+  }
+  useEffect(() => {
+    if (!isElectron) {
+      const next = mockPageUrl(workflow)
+      setUrl(next)
+      setInputUrl(WORKFLOW_DISPLAY_URLS[workflow] ?? next)
+      if (webviewRef.current) webviewRef.current.src = next
+    }
+  }, [workflow])
 
   // ── Webview navigation events (Electron only) ───────────
   useEffect(() => {
@@ -470,7 +487,11 @@ ${currentInput}`
     if (isElectron && webviewRef.current) {
       webviewRef.current.loadURL(targetUrl)
     } else {
-      setUrl(targetUrl)
+      // In web mode, external URLs can't load in an iframe — stay on mock page
+      const next = mockPageUrl(workflow)
+      setUrl(next)
+      if (webviewRef.current) webviewRef.current.src = next
+      setNotification({ message: `Web preview mode: showing mock ${workflow} page. Deploy to Electron to browse live sites.`, type: 'info' })
     }
   }
 
@@ -647,7 +668,6 @@ ${currentInput}`
               src={url}
               style={{ width: '100%', height: '100%', border: 'none' }}
               title="Yogi Browser Viewport"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation"
             />
           )}
         </div>
