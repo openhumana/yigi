@@ -11,6 +11,9 @@ import { useMissionRunner } from './hooks/useMissionRunner'
 // Detect Electron: window.yogi is set by the preload bridge at startup
 const isElectron = !!(window as any).yogi
 
+// Height (px) reserved for the agent action overlay banner in Electron mode
+const OVERLAY_BANNER_H = 44
+
 // ──────────────────────────────────────────────
 // MOCK MODE — Web preview simulation layer
 // Active whenever isElectron is false.
@@ -371,46 +374,67 @@ const App = () => {
     }
   }, [isResizing, resize, stopResizing])
 
-  // ── BrowserView: send pixel bounds to main process ──────────────────────
-  // BrowserView is positioned by the main process so Chromium always gets the
-  // exact viewport size — no CSS-to-compositor ambiguity.
-  useEffect(() => {
+  // ── BrowserView: unified bounds computation ──────────────────────────────
+  // Single source of truth for where the BrowserView should be placed.
+  // Refs allow the resize observer callback to always read the latest state
+  // without being torn down and recreated on every state change.
+  const showSettingsRef = useRef(showSettings)
+  const isThinkingRef = useRef(false) // populated below after isThinking is declared
+  useEffect(() => { showSettingsRef.current = showSettings }, [showSettings])
+
+  const applyBrowserBounds = useCallback(() => {
     if (!isElectron) return
     const yogi = (window as any).yogi
     if (!yogi?.browserSetBounds) return
-
-    const sendBounds = () => {
-      const el = viewportRef.current
-      if (!el) return
-      const r = el.getBoundingClientRect()
-      if (r.width > 0 && r.height > 0) {
-        yogi.browserSetBounds(Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height))
-      }
+    if (showSettingsRef.current) {
+      // Push off-screen so modals are not obscured
+      yogi.browserSetBounds(0, 0, 0, 0)
+      return
     }
+    const el = viewportRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0 || r.height <= 0) return
+    // When the agent is thinking, reserve OVERLAY_BANNER_H px at the top of the
+    // viewport for the DOM overlay banner (BrowserView is a native layer that
+    // would otherwise cover it). This is an intentional product tradeoff:
+    // the topmost strip of the viewport shows the status banner rather than
+    // browser content while the agent is active.
+    const topOffset = isThinkingRef.current ? OVERLAY_BANNER_H : 0
+    yogi.browserSetBounds(
+      Math.round(r.left),
+      Math.round(r.top) + topOffset,
+      Math.round(r.width),
+      Math.round(r.height) - topOffset,
+    )
+  }, [])
 
-    const ro = new ResizeObserver(sendBounds)
+  // ── BrowserView: send pixel bounds on resize / layout changes ────────────
+  useEffect(() => {
+    if (!isElectron) return
+
+    const ro = new ResizeObserver(applyBrowserBounds)
     if (viewportRef.current) ro.observe(viewportRef.current)
-    // Also re-send on window resize (covers maximize/restore)
-    window.addEventListener('resize', sendBounds)
+    window.addEventListener('resize', applyBrowserBounds)
     // Delay the initial bounds read with two chained rAFs + 500ms safety timeout
     // so the bounds are only sent after win.maximize() has fully completed and
     // the React flex layout has settled. This prevents the 0,0 flash.
     let raf1: number, raf2: number
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        sendBounds()
+        applyBrowserBounds()
       })
     })
-    const t = setTimeout(sendBounds, 500)
+    const t = setTimeout(applyBrowserBounds, 500)
 
     return () => {
       ro.disconnect()
-      window.removeEventListener('resize', sendBounds)
+      window.removeEventListener('resize', applyBrowserBounds)
       cancelAnimationFrame(raf1)
       cancelAnimationFrame(raf2)
       clearTimeout(t)
     }
-  }, [isElectron])
+  }, [isElectron, applyBrowserBounds])
 
   // ── BrowserView: listen for URL/load events from main process ────────────
   useEffect(() => {
@@ -440,25 +464,10 @@ const App = () => {
     }
   }, [isElectron])
 
-  // ── BrowserView: hide when modal is open ────────────────────────────────
+  // ── BrowserView: re-apply bounds when modal state changes ────────────────
   useEffect(() => {
-    if (!isElectron) return
-    const yogi = (window as any).yogi
-    if (!yogi?.browserSetBounds) return
-    if (showSettings) {
-      // Push off-screen so the modal is not obscured
-      yogi.browserSetBounds(0, 0, 0, 0)
-    } else {
-      // Restore by re-sending the current bounds
-      const el = viewportRef.current
-      if (el) {
-        const r = el.getBoundingClientRect()
-        if (r.width > 0 && r.height > 0) {
-          yogi.browserSetBounds(Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height))
-        }
-      }
-    }
-  }, [isElectron, showSettings])
+    applyBrowserBounds()
+  }, [showSettings, applyBrowserBounds])
 
   // ── Settings ────────────────────────────────────────────
   useEffect(() => {
@@ -815,6 +824,13 @@ const App = () => {
   useEffect(() => {
     if (isDrawerOpen) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [thinkingLogs, isDrawerOpen])
+
+  // Keep isThinkingRef in sync so the unified applyBrowserBounds callback
+  // always reads the latest value without needing to be recreated.
+  useEffect(() => {
+    isThinkingRef.current = isThinking
+    applyBrowserBounds()
+  }, [isThinking, applyBrowserBounds])
 
   // Auto-scroll chat to bottom on new messages
   useEffect(() => {
@@ -1921,6 +1937,12 @@ ${currentInput}`
               }}
             />
           )}
+          <div className={`agent-action-overlay${isThinking ? ' visible' : ''}`}>
+            <div className="agent-action-banner">
+              <span className="agent-action-dot" />
+              <span className="agent-action-text">{thinkingLog}</span>
+            </div>
+          </div>
         </div>
       </div>
 
