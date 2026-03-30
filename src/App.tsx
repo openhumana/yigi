@@ -676,10 +676,11 @@ ${currentInput}`
   const MAX_RETRIES = 3
   const RETRY_DELAYS = [1000, 2000, 4000]
 
-  // ── HITL: approve a queued task with verify-after-action loop ──
-  const approveTask = async (id: string) => {
+  type ApproveResult = { status: 'success' | 'escalated' | 'error'; retries?: number; reason?: string }
+
+  const approveTask = async (id: string): Promise<ApproveResult> => {
     const task = tasks.find(t => t.id === id)
-    if (!task) return
+    if (!task) return { status: 'error', reason: 'Task not found' }
 
     setTasks(prev => prev.filter(t => t.id !== id))
 
@@ -738,7 +739,7 @@ ${currentInput}`
               role: 'agent',
               message: `✅ ${task.action === 'dom_click' ? 'Clicked' : 'Typed into'}: ${task.description}`
             }])
-            return
+            return { status: 'success', retries: attempt }
           }
 
           logVerification(`✗ Verification failed: ${lastResult.reason}`)
@@ -753,13 +754,14 @@ ${currentInput}`
           playEscalationChime()
           fireNotification('Yogi needs your help', escMsg)
         }
+        return { status: 'escalated', retries: MAX_RETRIES, reason: lastResult.reason }
       } else {
         const actionLabel = task.action === 'dom_type'
           ? `TYPE "${task.payload?.value?.slice(0, 40) ?? ''}" into ${task.payload?.selector}`
           : `CLICK ${task.payload?.selector}`
         setMessages(prev => [...prev, { role: 'agent', message: `✅ Simulated: ${actionLabel}` }])
       }
-      return
+      return { status: 'success' }
     }
 
     // ── Electron mode: full verify-after-action loop ──────────
@@ -778,7 +780,7 @@ ${currentInput}`
           logVerification(`🛡 Sensitive action detected — requires manual confirmation`)
           setNotification({ message: `Sensitive action: "${task.description}" — confirm manually`, type: 'alert' })
           setTasks(prev => [{ ...task, id: task.id, sensitive: true }, ...prev])
-          return
+          return { status: 'escalated', reason: 'Sensitive action requires manual confirmation' }
         }
 
         let lastValidation: any = { status: 'retry', reason: 'Not executed', confidence: 0 }
@@ -842,7 +844,7 @@ ${currentInput}`
               playEscalationChime()
               fireNotification('Yogi needs your help', captchaMsg)
             }
-            return
+            return { status: 'escalated', retries: attempt, reason: 'CAPTCHA detected' }
           }
 
           if (lastValidation.status === 'success') {
@@ -867,6 +869,7 @@ ${currentInput}`
                     if (vision.analysis.captchaDetected) {
                       logVerification(`🛑 Vision detected CAPTCHA`)
                       setNotification({ message: 'CAPTCHA detected visually! Please solve it.', type: 'alert' })
+                      return { status: 'escalated', retries: attempt, reason: 'CAPTCHA detected via vision' }
                     }
                   }
                 }
@@ -874,7 +877,7 @@ ${currentInput}`
                 logVerification(`👁 Vision unavailable: ${visionErr.message}`)
               }
             }
-            return
+            return { status: 'success', retries: attempt }
           }
 
           logVerification(`✗ Verification: ${lastValidation.reason}`)
@@ -889,6 +892,7 @@ ${currentInput}`
           playEscalationChime()
           fireNotification('Yogi needs your help', escMsg2)
         }
+        return { status: 'escalated', retries: MAX_RETRIES, reason: lastValidation.reason }
       } else if (task.action === 'navigate') {
         const targetUrl = task.payload.url
         if (webviewRef.current && isElectron) {
@@ -905,9 +909,11 @@ ${currentInput}`
       } else {
         await (window as any).yogi.humanInteraction(task.action, task.payload)
       }
+      return { status: 'success' } as ApproveResult
     } catch (e: any) {
       logVerification(`⚠ Error: ${e.message}`)
       setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Task Failed: ${e.message}` }])
+      return { status: 'error', reason: e.message } as ApproveResult
     }
   }
 
@@ -943,7 +949,12 @@ ${currentInput}`
           status: 'skipped',
           reason: safetyReason,
         })
-        setNotification({ message: `${safetyReason}: "${task.description}"`, type: 'alert' })
+        setTasks(prev => {
+          const exists = prev.some(t => t.id === task.id)
+          if (exists) return prev.map(t => t.id === task.id ? { ...t, sensitive: true } : t)
+          return [{ ...task, sensitive: true }, ...prev]
+        })
+        setNotification({ message: `${safetyReason}: "${task.description}" — needs manual approval`, type: 'alert' })
         continue
       }
 
@@ -955,6 +966,11 @@ ${currentInput}`
           status: 'skipped',
           reason: `Confidence ${task.confidence}% below threshold ${confThreshold}%`,
           confidence: task.confidence,
+        })
+        setTasks(prev => {
+          const exists = prev.some(t => t.id === task.id)
+          if (exists) return prev.map(t => t.id === task.id ? { ...t, sensitive: true } : t)
+          return [{ ...task, sensitive: true }, ...prev]
         })
         setNotification({ message: `Low confidence (${task.confidence}%) — needs manual review: "${task.description}"`, type: 'alert' })
         continue
@@ -971,23 +987,33 @@ ${currentInput}`
         status: 'running',
       }])
 
+      let result: ApproveResult
       try {
-        await approveTask(task.id)
+        result = await approveTask(task.id)
       } catch (e: any) {
+        result = { status: 'error', reason: e.message }
+      }
+
+      const elapsed = Date.now() - startTime
+
+      if (result.status === 'escalated' || result.status === 'error') {
         updateExecLog(logId, {
           status: 'escalate',
-          reason: e.message,
-          elapsed: Date.now() - startTime,
+          reason: result.reason || 'Unknown error',
+          elapsed,
+          retries: result.retries,
         })
-        setEscalation({ message: `Action failed: ${task.description} — ${e.message}`, taskId: task.id })
-        playEscalationChime()
-        fireNotification('Yogi needs your help', `Action failed: ${task.description}`)
+        if (!escalation) {
+          const escMsg = result.reason || `Action failed: ${task.description}`
+          setEscalation({ message: escMsg, taskId: task.id })
+          playEscalationChime()
+          fireNotification('Yogi needs your help', escMsg)
+        }
         setAutoExecuting(false)
         return
       }
 
-      const elapsed = Date.now() - startTime
-      updateExecLog(logId, { status: 'success', elapsed })
+      updateExecLog(logId, { status: 'success', elapsed, retries: result.retries })
 
       if (i < taskQueue.length - 1 && autoPilotRef.current) {
         await sleep(stepDelay)
@@ -999,13 +1025,23 @@ ${currentInput}`
 
   useEffect(() => {
     if (!autoPilot || tasks.length === 0 || autoExecutingRef.current) return
-    const tasksCopy = [...tasks]
-    autoExecuteLoop(tasksCopy)
+    const executableTasks = tasks.filter(t => !t.sensitive)
+    if (executableTasks.length === 0) return
+    autoExecuteLoop(executableTasks)
   }, [autoPilot, tasks, autoExecuteLoop])
+
+  useEffect(() => {
+    const saved = localStorage.getItem('yogi_autoPilot')
+    if (saved === 'true') {
+      setAutoPilot(true)
+      autoPilotRef.current = true
+    }
+  }, [])
 
   const toggleAutoPilot = useCallback(() => {
     setAutoPilot(prev => {
       const next = !prev
+      localStorage.setItem('yogi_autoPilot', String(next))
       if (!next && autoExecutingRef.current) {
         addExecLog({ action: 'pause', description: 'Auto-Pilot paused by user', status: 'skipped' })
       }
@@ -1187,6 +1223,7 @@ ${currentInput}`
                       <div className="exec-log-entry-meta">
                         {new Date(entry.timestamp).toLocaleTimeString()}
                         {entry.elapsed != null && ` · ${(entry.elapsed / 1000).toFixed(1)}s`}
+                        {entry.retries != null && entry.retries > 0 && ` · ${entry.retries} ${entry.retries === 1 ? 'retry' : 'retries'}`}
                         {entry.reason && ` · ${entry.reason}`}
                         {entry.confidence != null && ` · ${entry.confidence}%`}
                       </div>
