@@ -37,6 +37,25 @@ const BRIDGE_SCRIPT = `<script id="yogi-bridge">
     if(d.type==='yogi-click'){el=document.querySelector(d.selector);if(el){el.focus();el.click();setTimeout(reportDOM,1000);}}
     if(d.type==='yogi-type'){el=document.querySelector(d.selector);if(el){el.focus();el.value=d.value;['input','change'].forEach(function(ev){el.dispatchEvent(new Event(ev,{bubbles:true}));});setTimeout(reportDOM,500);}}
     if(d.type==='yogi-dom-request'){reportDOM();}
+    if(d.type==='yogi-screenshot-request'){
+      if(!window.__html2canvasLoaded){
+        var s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        s.onload=function(){window.__html2canvasLoaded=true;doCapture();};
+        s.onerror=function(){
+          try{window.parent.postMessage({type:'yogi-screenshot-result',status:'error',message:'Failed to load html2canvas'},'*');}catch(x){}
+        };
+        document.head.appendChild(s);
+      }else{doCapture();}
+      function doCapture(){
+        html2canvas(document.body,{useCORS:true,allowTaint:true,scale:0.5,logging:false}).then(function(canvas){
+          var data=canvas.toDataURL('image/png').split(',')[1];
+          try{window.parent.postMessage({type:'yogi-screenshot-result',status:'success',image:data},'*');}catch(x){}
+        }).catch(function(err){
+          try{window.parent.postMessage({type:'yogi-screenshot-result',status:'error',message:err.message},'*');}catch(x){}
+        });
+      }
+    }
   });
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',reportDOM);}
   else{setTimeout(reportDOM,600);}

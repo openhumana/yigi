@@ -323,13 +323,56 @@ ipcMain.handle('wait-for-stability', async (_, { timeoutMs } = { timeoutMs: 5000
 
     await webview.executeJavaScript(`
       new Promise((resolve) => {
-        let timer = null;
+        const maxTimeout = ${timeoutMs || 5000};
+        let domQuiet = false;
+        let netIdle = false;
+        let domTimer = null;
+        let pendingRequests = 0;
+
+        function checkDone() {
+          if (domQuiet && netIdle) { cleanup(); resolve(true); }
+        }
+
         const observer = new MutationObserver(() => {
-          clearTimeout(timer);
-          timer = setTimeout(() => { observer.disconnect(); resolve(true); }, 500);
+          clearTimeout(domTimer);
+          domTimer = setTimeout(() => { domQuiet = true; checkDone(); }, 500);
         });
         observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-        timer = setTimeout(() => { observer.disconnect(); resolve(true); }, ${timeoutMs});
+
+        domTimer = setTimeout(() => { domQuiet = true; checkDone(); }, 500);
+
+        const origFetch = window.fetch;
+        window.fetch = function() {
+          pendingRequests++;
+          return origFetch.apply(this, arguments).finally(() => {
+            pendingRequests--;
+            if (pendingRequests <= 0) { netIdle = true; checkDone(); }
+          });
+        };
+
+        const origOpen = XMLHttpRequest.prototype.open;
+        const origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function() { return origOpen.apply(this, arguments); };
+        XMLHttpRequest.prototype.send = function() {
+          pendingRequests++;
+          this.addEventListener('loadend', () => {
+            pendingRequests--;
+            if (pendingRequests <= 0) { netIdle = true; checkDone(); }
+          }, { once: true });
+          return origSend.apply(this, arguments);
+        };
+
+        setTimeout(() => { netIdle = true; checkDone(); }, 1500);
+
+        function cleanup() {
+          observer.disconnect();
+          clearTimeout(domTimer);
+          window.fetch = origFetch;
+          XMLHttpRequest.prototype.open = origOpen;
+          XMLHttpRequest.prototype.send = origSend;
+        }
+
+        setTimeout(() => { cleanup(); resolve(true); }, maxTimeout);
       })
     `)
     return { status: 'success' }
@@ -345,7 +388,7 @@ ipcMain.handle('validate-action', async (_, { action, before }) => {
     if (!webview) return { status: 'error', message: 'No webview' }
 
     const after = await captureBrowserSnapshot()
-    const result = validateAction(action as ActionContext, before as BrowserSnapshot, after)
+    let result = validateAction(action as ActionContext, before as BrowserSnapshot, after)
 
     const captcha = detectCaptcha(after)
     if (captcha) {
@@ -353,6 +396,15 @@ ipcMain.handle('validate-action', async (_, { action, before }) => {
         validation: { status: 'escalate', reason: 'CAPTCHA detected on page — human intervention required', confidence: 10 },
         after,
         captchaDetected: true,
+      }
+    }
+
+    if (result.confidence > 30 && result.confidence < 60) {
+      try {
+        const llmResult = await orchestrator.validateWithLLM(action, before, after)
+        if (llmResult) result = llmResult
+      } catch (e: any) {
+        console.error('[Validate] LLM fallback failed:', e.message)
       }
     }
 

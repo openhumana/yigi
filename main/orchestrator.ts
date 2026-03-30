@@ -226,7 +226,7 @@ class ModelOrchestrator {
       const match = text.match(/```json\s*([\s\S]*?)```/)
       if (match) {
         const parsed = JSON.parse(match[1].trim())
-        return !!parsed.requestScreenshot
+        return !!(parsed.requestScreenshot || parsed.screenshot)
       }
     } catch (e) {}
     return false
@@ -293,6 +293,73 @@ STRICT RESPONSE FORMAT — output ONLY this, nothing else:
   ]
 }
 \`\`\``
+  }
+
+  public async validateWithLLM(action: any, before: any, after: any): Promise<{ status: 'success' | 'retry' | 'escalate'; reason: string; confidence: number } | null> {
+    const poolNames = ['groq', 'google', 'openai']
+
+    const prompt = `You are validating whether a browser automation action succeeded.
+
+ACTION PERFORMED: ${action.action} on selector "${action.selector}"${action.value ? ` with value "${action.value}"` : ''}
+DESCRIPTION: ${action.description || 'N/A'}
+
+BEFORE STATE:
+- URL: ${before.url}
+- Title: ${before.title}
+- Elements: ${before.elements?.length || 0} interactive elements
+
+AFTER STATE:
+- URL: ${after.url}
+- Title: ${after.title}
+- Elements: ${after.elements?.length || 0} interactive elements
+
+URL changed: ${before.url !== after.url}
+Title changed: ${before.title !== after.title}
+Element count delta: ${(after.elements?.length || 0) - (before.elements?.length || 0)}
+
+Respond with ONLY this JSON (no markdown fences):
+{"status": "success" or "retry" or "escalate", "reason": "brief explanation", "confidence": 0-100}`
+
+    for (const poolName of poolNames) {
+      const pool = this.pools[poolName]
+      if (!pool || pool.instances.length === 0) continue
+
+      const instance = pool.instances.find(i => i.status === 'active')
+      if (!instance) continue
+
+      try {
+        let model: any
+        if (poolName === 'groq') {
+          model = new ChatGroq({ apiKey: instance.key, model: 'llama-3.3-70b-versatile', temperature: 0.1 })
+        } else if (poolName === 'google') {
+          model = new ChatGoogleGenerativeAI({ apiKey: instance.key, modelName: 'gemini-1.5-flash', temperature: 0.1 })
+        } else {
+          model = new ChatOpenAI({ openAIApiKey: instance.key, modelName: 'gpt-4o', temperature: 0.1 })
+        }
+
+        const response = await Promise.race([
+          model.invoke([new HumanMessage(prompt)]),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000)),
+        ]) as any
+
+        const rawText = typeof response.content === 'string' ? response.content : String(response.content)
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0])
+          if (['success', 'retry', 'escalate'].includes(parsed.status)) {
+            return {
+              status: parsed.status,
+              reason: `[LLM] ${parsed.reason || 'Validated by AI'}`,
+              confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 70,
+            }
+          }
+        }
+      } catch (e: any) {
+        console.error(`[Validator LLM] ${poolName} failed:`, e.message)
+        continue
+      }
+    }
+    return null
   }
 
   public getQuotas() {

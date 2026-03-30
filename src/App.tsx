@@ -418,16 +418,27 @@ ${currentInput}`
       if (res.requestScreenshot) {
         setThinkingLog('📸 AI requested visual analysis — capturing screenshot...')
         try {
-          const screenshotRes = await (window as any).yogi.captureScreenshot()
+          let screenshotRes: { status: string; image?: string }
+          if (isElectron) {
+            screenshotRes = await (window as any).yogi.captureScreenshot()
+          } else {
+            screenshotRes = await captureWebScreenshot()
+          }
           if (screenshotRes.status === 'success' && screenshotRes.image) {
-            const visionRes = await (window as any).yogi.analyzeScreenshot(
-              screenshotRes.image,
-              `User requested: ${currentInput}`,
-              undefined
-            )
-            if (visionRes.status === 'success' && visionRes.analysis) {
-              setThinkingLog(`👁 Visual context: ${visionRes.analysis.description}`)
-              const visualContext = `${elementsContext}\n\nVISUAL ANALYSIS OF PAGE:\n${visionRes.analysis.description}\nVisually identified elements: ${visionRes.analysis.interactiveElements.join(', ')}\nCAPTCHA detected: ${visionRes.analysis.captchaDetected}\n\nUSER REQUEST:\n${currentInput}`
+            if (isElectron) {
+              const visionRes = await (window as any).yogi.analyzeScreenshot(
+                screenshotRes.image,
+                `User requested: ${currentInput}`,
+                undefined
+              )
+              if (visionRes.status === 'success' && visionRes.analysis) {
+                setThinkingLog(`👁 Visual context: ${visionRes.analysis.description}`)
+                const visualContext = `${elementsContext}\n\nVISUAL ANALYSIS OF PAGE:\n${visionRes.analysis.description}\nVisually identified elements: ${visionRes.analysis.interactiveElements.join(', ')}\nCAPTCHA detected: ${visionRes.analysis.captchaDetected}\n\nUSER REQUEST:\n${currentInput}`
+                res = await (window as any).yogi.sendChatMessage(visualContext, 'high', workflow, settings)
+              }
+            } else {
+              setThinkingLog(`👁 Web screenshot captured (${Math.round((screenshotRes.image.length * 3) / 4 / 1024)}KB) — visual context available`)
+              const visualContext = `${elementsContext}\n\nVISUAL SCREENSHOT: A page screenshot was captured for analysis. The page contains ${proxyElementsRef.current.length} interactive elements.\n\nUSER REQUEST:\n${currentInput}`
               res = await (window as any).yogi.sendChatMessage(visualContext, 'high', workflow, settings)
             }
           }
@@ -503,6 +514,32 @@ ${currentInput}`
     }
   }
 
+  const captureWebScreenshot = (): Promise<{ status: string; image?: string; message?: string }> => {
+    return new Promise((resolve) => {
+      const iframe = webviewRef.current as HTMLIFrameElement | null
+      if (!iframe?.contentWindow) {
+        resolve({ status: 'error', message: 'No iframe available' })
+        return
+      }
+
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', handler)
+        resolve({ status: 'error', message: 'Screenshot timeout' })
+      }, 10000)
+
+      const handler = (ev: MessageEvent) => {
+        if (ev.data?.type === 'yogi-screenshot-result') {
+          clearTimeout(timeout)
+          window.removeEventListener('message', handler)
+          resolve({ status: ev.data.status, image: ev.data.image, message: ev.data.message })
+        }
+      }
+
+      window.addEventListener('message', handler)
+      iframe.contentWindow.postMessage({ type: 'yogi-screenshot-request' }, '*')
+    })
+  }
+
   // ── Web mode: wait for proxy DOM to stabilize after action ─
   const waitForWebStability = async () => {
     await sleep(800)
@@ -557,16 +594,35 @@ ${currentInput}`
         logVerification(`▶ Executing: ${task.description}`)
 
         let lastResult: { status: string; reason: string; confidence: number } = { status: 'retry', reason: '', confidence: 0 }
+        let currentSelector = task.payload?.selector
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           if (attempt > 0) {
             logVerification(`🔄 Retry ${attempt}/${MAX_RETRIES} — waiting ${RETRY_DELAYS[attempt - 1]}ms...`)
             await sleep(RETRY_DELAYS[attempt - 1])
+
+            if (iframe?.contentWindow) {
+              iframe.contentWindow.postMessage({ type: 'yogi-dom-request' }, '*')
+              await sleep(600)
+            }
+            const freshElements = proxyElementsRef.current
+            if (freshElements.length > 0) {
+              const altEl = freshElements.find((el: any) => {
+                const descLower = (task.description || '').toLowerCase()
+                const textMatch = el.text && descLower.includes(el.text.toLowerCase())
+                const ariaMatch = el.ariaLabel && descLower.includes(el.ariaLabel.toLowerCase())
+                return (textMatch || ariaMatch) && el.selector !== task.payload?.selector
+              })
+              if (altEl) {
+                currentSelector = altEl.selector
+                logVerification(`🔄 Trying alternative selector: ${currentSelector}`)
+              }
+            }
           }
 
           if (task.action === 'dom_click') {
-            iframe.contentWindow!.postMessage({ type: 'yogi-click', selector: task.payload?.selector }, '*')
+            iframe.contentWindow!.postMessage({ type: 'yogi-click', selector: currentSelector }, '*')
           } else if (task.action === 'dom_type') {
-            iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: task.payload?.selector, value: task.payload?.value ?? '' }, '*')
+            iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: currentSelector, value: task.payload?.value ?? '' }, '*')
           }
 
           await waitForWebStability()
@@ -625,15 +681,36 @@ ${currentInput}`
         }
 
         let lastValidation: any = { status: 'retry', reason: 'Not executed', confidence: 0 }
+        let currentSelector = task.payload.selector
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           if (attempt > 0) {
             logVerification(`🔄 Retry ${attempt}/${MAX_RETRIES} — waiting ${RETRY_DELAYS[attempt - 1]}ms...`)
             await sleep(RETRY_DELAYS[attempt - 1])
+
+            logVerification(`🔍 Re-scanning page for alternative selectors...`)
+            try {
+              const freshState = await (window as any).yogi.getBrowserState()
+              if (freshState.status === 'success' && freshState.elements?.length > 0) {
+                const altEl = freshState.elements.find((el: any) => {
+                  const descLower = (task.description || '').toLowerCase()
+                  const textMatch = el.text && descLower.includes(el.text.toLowerCase())
+                  const ariaMatch = el.ariaLabel && descLower.includes(el.ariaLabel.toLowerCase())
+                  const placeholderMatch = el.placeholder && descLower.includes(el.placeholder.toLowerCase())
+                  return (textMatch || ariaMatch || placeholderMatch) && el.selector !== task.payload.selector
+                })
+                if (altEl) {
+                  currentSelector = altEl.selector
+                  logVerification(`🔄 Trying alternative selector: ${currentSelector}`)
+                }
+              }
+            } catch (e: any) {
+              logVerification(`🔍 Re-scan failed: ${e.message}`)
+            }
           }
 
           logVerification(`▶ Executing: ${task.description}`)
           const result = await (window as any).yogi.domAction(
-            task.payload.selector,
+            currentSelector,
             task.action,
             task.payload.value || ''
           )
@@ -648,7 +725,7 @@ ${currentInput}`
 
           logVerification(`🔍 Validating action result...`)
           const validation = await (window as any).yogi.validateAction(
-            { action: task.action, selector: task.payload.selector, value: task.payload.value, description: task.description },
+            { action: task.action, selector: currentSelector, value: task.payload.value, url: task.payload.url, description: task.description },
             beforeSnapshot
           )
 
