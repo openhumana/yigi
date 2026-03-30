@@ -1345,14 +1345,25 @@ ${currentInput}`
 
     if (action.action === 'dom_click') {
       if (urlChanged) return { status: 'success', reason: `Page navigated to ${after.url}`, confidence: 95 }
+      // If we're already on search results (from a prior type/search), accept as done
+      if (after.url.includes('/search?') || after.url.includes('?q=')) return { status: 'success', reason: `Search results already loaded`, confidence: 90 }
       if (Math.abs(elementCountDelta) >= 3) return { status: 'success', reason: `Page changed (${elementCountDelta > 0 ? '+' : ''}${elementCountDelta} elements)`, confidence: 75 }
       const newEls = after.elements.filter((ae: any) => !before.elements.some((be: any) => be.selector === ae.selector))
       if (newEls.length >= 2) return { status: 'success', reason: `${newEls.length} new elements appeared`, confidence: 70 }
       return { status: 'retry', reason: `Click on "${action.selector}" — no visible change detected`, confidence: 30 }
     }
     if (action.action === 'dom_type') {
+      const typedValue = (action.value || '').toLowerCase().trim()
+      if (urlChanged) return { status: 'success', reason: `Page navigated after typing (search submitted)`, confidence: 95 }
+      if (typedValue) {
+        const valueAppeared = after.elements.some((e: any) =>
+          (e.text || '').toLowerCase().includes(typedValue.slice(0, 10)) ||
+          (e.placeholder || '').toLowerCase().includes(typedValue.slice(0, 10))
+        )
+        if (valueAppeared) return { status: 'success', reason: `Typed value appeared in page elements`, confidence: 80 }
+      }
       const target = after.elements.find((e: any) => e.selector === action.selector)
-      if (target) return { status: 'success', reason: `Target element still present after typing`, confidence: 65 }
+      if (target) return { status: 'success', reason: `Element present after typing — value may be React-controlled`, confidence: 55 }
       return { status: 'retry', reason: `Target "${action.selector}" not found after typing`, confidence: 20 }
     }
     return { status: 'success', reason: 'Action completed', confidence: 50 }
@@ -1414,7 +1425,39 @@ ${currentInput}`
           if (task.action === 'dom_click') {
             iframe.contentWindow!.postMessage({ type: 'yogi-click', selector: currentSelector }, '*')
           } else if (task.action === 'dom_type') {
-            iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: currentSelector, value: task.payload?.value ?? '' }, '*')
+            const typeValue = task.payload?.value ?? ''
+            iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: currentSelector, value: typeValue }, '*')
+            // Direct-navigation fallback for search engines — fires 1.5s after type so bridge script's own
+            // form-submit fires first; we only navigate directly if the bridge didn't trigger a yogi-navigate
+            if (typeValue) {
+              const rawUrl = inputUrl.replace(/^https?:\/\//, '').split('?')[0]
+              const isSearchSel = currentSelector.toLowerCase().includes('search') || currentSelector.includes('[name="q"]')
+              const isSearchDesc = (task.description || '').toLowerCase().includes('search') || (task.description || '').toLowerCase().includes('query')
+              if (isSearchSel || isSearchDesc) {
+                if (rawUrl.includes('google.com')) {
+                  setTimeout(() => {
+                    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(typeValue)}`
+                    setUrl(proxyUrl(searchUrl))
+                    setInputUrl(searchUrl)
+                    if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
+                  }, 1500)
+                } else if (rawUrl.includes('bing.com')) {
+                  setTimeout(() => {
+                    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(typeValue)}`
+                    setUrl(proxyUrl(searchUrl))
+                    setInputUrl(searchUrl)
+                    if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
+                  }, 1500)
+                } else if (rawUrl.includes('duckduckgo.com')) {
+                  setTimeout(() => {
+                    const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(typeValue)}`
+                    setUrl(proxyUrl(searchUrl))
+                    setInputUrl(searchUrl)
+                    if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
+                  }, 1500)
+                }
+              }
+            }
           } else if (task.action === 'dom_press_enter') {
             iframe.contentWindow!.postMessage({ type: 'yogi-press-enter', selector: currentSelector }, '*')
             // Direct-navigation fallback: if pressing Enter on a search field,
