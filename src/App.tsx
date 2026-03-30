@@ -203,25 +203,36 @@ async function mockAIResponse(
   }
 
   // Guarantee at least 2 tasks — pad with first unused clickable/typeable elements
+  // For search/find intents, NEVER add nav links as padding — only inputs
+  const isSearchIntent = lower.includes('search') || lower.includes('find') || lower.includes('look for')
   if (tasks.length < 2) {
     const usedSelectors = new Set(tasks.map((t: any) => t.payload?.selector))
-    const clickable = elements.find(e => (e.tag === 'button' || e.tag === 'a') && !usedSelectors.has(e.selector))
-    const typeable  = elements.find(e => (e.tag === 'input'  || e.tag === 'textarea') && !usedSelectors.has(e.selector))
-    if (tasks.length < 1 && clickable) {
-      tasks.push({ action: 'dom_click', description: `Click "${clickable.text || clickable.selector}"`, payload: { selector: clickable.selector } })
-      usedSelectors.add(clickable.selector)
+    // Skip navigation links (About, Store, Help, Sign in, etc.) to avoid accidental page nav
+    const navWords = ['about', 'store', 'help', 'sign in', 'sign up', 'login', 'register', 'privacy', 'terms', 'contact']
+    const isSafeClickable = (e: MockElement) =>
+      (e.tag === 'button' || e.tag === 'a') &&
+      !usedSelectors.has(e.selector) &&
+      !navWords.some(w => e.text.toLowerCase().includes(w))
+    const clickable = isSearchIntent ? null : elements.find(isSafeClickable)
+    const typeable  = elements.find(e => (e.tag === 'input' || e.tag === 'textarea') && !usedSelectors.has(e.selector))
+    if (tasks.length < 1) {
+      if (typeable) {
+        // Prefer typing over clicking nav links
+        tasks.push({ action: 'dom_type', description: `Type into ${typeable.placeholder || typeable.selector}`, payload: { selector: typeable.selector, value: userInput } })
+        usedSelectors.add(typeable.selector)
+      } else if (clickable) {
+        tasks.push({ action: 'dom_click', description: `Click "${clickable.text || clickable.selector}"`, payload: { selector: clickable.selector } })
+        usedSelectors.add(clickable.selector)
+      }
     }
     if (tasks.length < 2) {
-      const filler = typeable ?? elements.find(e => !usedSelectors.has(e.selector))
-      if (filler) tasks.push({
-        action: filler.tag === 'input' || filler.tag === 'textarea' ? 'dom_type' : 'dom_click',
-        description: filler.tag === 'input' || filler.tag === 'textarea'
-          ? `Type into ${filler.placeholder || filler.selector}`
-          : `Click "${filler.text || filler.selector}"`,
-        payload: filler.tag === 'input' || filler.tag === 'textarea'
-          ? { selector: filler.selector, value: userInput }
-          : { selector: filler.selector },
-      })
+      const filler = typeable && !usedSelectors.has(typeable.selector) ? typeable : null
+      if (filler) {
+        tasks.push({ action: 'dom_type', description: `Type into ${filler.placeholder || filler.selector}`, payload: { selector: filler.selector, value: userInput } })
+      } else if (!isSearchIntent) {
+        const safeEl = elements.find(e => !usedSelectors.has(e.selector) && isSafeClickable(e))
+        if (safeEl) tasks.push({ action: 'dom_click', description: `Click "${safeEl.text || safeEl.selector}"`, payload: { selector: safeEl.selector } })
+      }
     }
   }
 

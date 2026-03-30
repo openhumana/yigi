@@ -66,9 +66,9 @@ const BRIDGE_SCRIPT = `<script id="yogi-bridge">
 
 // ── Proxy middleware ──────────────────────────────────────────────────────────
 const STRIP_HEADERS = new Set([
-  'x-frame-options','content-security-policy','x-content-type-options',
-  'frame-options','cross-origin-opener-policy','cross-origin-embedder-policy',
-  'cross-origin-resource-policy',
+  'x-frame-options','content-security-policy','content-security-policy-report-only',
+  'x-content-type-options','frame-options','cross-origin-opener-policy',
+  'cross-origin-embedder-policy','cross-origin-resource-policy',
 ])
 
 async function proxyMiddleware(
@@ -101,6 +101,13 @@ async function proxyMiddleware(
 
     if (contentType.includes('text/html')) {
       let html = await upstream.text()
+
+      // ── Strip page-level CSP so the bridge script can run ────────────
+      // Google and other sites embed <meta http-equiv="Content-Security-Policy">
+      // which blocks our injected inline script even after we strip the header.
+      html = html.replace(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '')
+      html = html.replace(/<meta[^>]+http-equiv=["']X-Frame-Options["'][^>]*>/gi, '')
+
       // Inject <base> so relative resources load from origin, plus the bridge script
       const finalUrl = upstream.url || targetUrl
       const injection = `<base href="${finalUrl}">\n${BRIDGE_SCRIPT}`
@@ -111,7 +118,14 @@ async function proxyMiddleware(
       } else {
         html = injection + html
       }
-      res.writeHead(upstream.status, { ...outHeaders, 'content-type': 'text/html; charset=utf-8' })
+
+      // Override CSP header with a permissive policy so our inline bridge runs
+      const permissiveHeaders = {
+        ...outHeaders,
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
+      }
+      res.writeHead(upstream.status, permissiveHeaders)
       res.end(html)
     } else {
       res.writeHead(upstream.status, outHeaders)
