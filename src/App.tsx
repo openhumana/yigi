@@ -190,7 +190,10 @@ async function mockAIResponse(
       e.text?.toLowerCase().includes('search')
     )
     const typeable = searchEl || elements.find(e => e.tag === 'input' || e.tag === 'textarea')
-    if (typeable) tasks.push({ action: 'dom_type', description: 'Type search query into the search bar', payload: { selector: typeable.selector, value: userInput } })
+    if (typeable) {
+      tasks.push({ action: 'dom_type', description: 'Type search query into the search bar', payload: { selector: typeable.selector, value: userInput } })
+      tasks.push({ action: 'dom_press_enter', description: 'Press Enter to run the search', payload: { selector: typeable.selector } })
+    }
   } else {
     // Generic fallback — pick first clickable, then first typeable
     const clickable = elements.find(e => e.tag === 'button' || e.tag === 'a')
@@ -259,8 +262,8 @@ const App = () => {
   const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
 
-  const [autoPilot, setAutoPilot] = useState(false)
-  const autoPilotRef = useRef(false)
+  const [autoPilot, setAutoPilot] = useState(true)
+  const autoPilotRef = useRef(true)
   const [escalation, setEscalation] = useState<{ message: string; taskId?: string } | null>(null)
 
   const [sidePanel, setSidePanel] = useState<'chat' | 'missions' | 'skills'>('chat')
@@ -782,6 +785,12 @@ const App = () => {
     setMessages(prev => [...prev, { role: 'user', message: currentInput }])
     setInput('')
     setIsThinking(true)
+
+    // Auto-enable Auto-Pilot so commands execute without manual approval
+    if (!autoPilotRef.current) {
+      setAutoPilot(true)
+      autoPilotRef.current = true
+    }
     setThinkingLog('Scanning page for interactive elements...')
 
     try {
@@ -1080,6 +1089,8 @@ ${currentInput}`
             iframe.contentWindow!.postMessage({ type: 'yogi-click', selector: currentSelector }, '*')
           } else if (task.action === 'dom_type') {
             iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: currentSelector, value: task.payload?.value ?? '' }, '*')
+          } else if (task.action === 'dom_press_enter') {
+            iframe.contentWindow!.postMessage({ type: 'yogi-press-enter', selector: currentSelector }, '*')
           }
 
           await waitForWebStability()
@@ -1095,7 +1106,7 @@ ${currentInput}`
             logVerification(`✓ Verified: ${lastResult.reason} (confidence: ${lastResult.confidence}%)`)
             setMessages(prev => [...prev, {
               role: 'agent',
-              message: `✅ ${task.action === 'dom_click' ? 'Clicked' : 'Typed into'}: ${task.description}`
+              message: `✅ ${task.action === 'dom_click' ? 'Clicked' : task.action === 'dom_type' ? 'Typed into' : 'Pressed Enter on'}: ${task.description}`
             }])
             return { status: 'success', retries: attempt }
           }

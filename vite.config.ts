@@ -35,7 +35,8 @@ const BRIDGE_SCRIPT = `<script id="yogi-bridge">
     var d=e.data;if(!d||!d.type)return;
     var el;
     if(d.type==='yogi-click'){el=document.querySelector(d.selector);if(el){el.focus();el.click();setTimeout(reportDOM,1000);}}
-    if(d.type==='yogi-type'){el=document.querySelector(d.selector);if(el){el.focus();el.value=d.value;['input','change'].forEach(function(ev){el.dispatchEvent(new Event(ev,{bubbles:true}));});setTimeout(reportDOM,500);}}
+    if(d.type==='yogi-type'){el=document.querySelector(d.selector);if(el){el.focus();el.value=d.value;['input','change'].forEach(function(ev){el.dispatchEvent(new Event(ev,{bubbles:true}));});var isSearch=(el.type==='search'||el.getAttribute('role')==='searchbox'||(el.getAttribute('aria-label')||'').toLowerCase().includes('search')||(el.placeholder||'').toLowerCase().includes('search')||d.selector.toLowerCase().includes('search'));if(isSearch){setTimeout(function(){el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));el.dispatchEvent(new KeyboardEvent('keypress',{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));el.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));var form=el.closest('form');if(form)form.submit();setTimeout(reportDOM,1500);},400);}else{setTimeout(reportDOM,500);}}}
+    if(d.type==='yogi-press-enter'){el=document.querySelector(d.selector)||document.activeElement;if(el){['keydown','keypress','keyup'].forEach(function(ev){el.dispatchEvent(new KeyboardEvent(ev,{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));});var form=el.closest('form');if(form)form.submit();setTimeout(reportDOM,1500);}}
     if(d.type==='yogi-dom-request'){reportDOM();}
     if(d.type==='yogi-screenshot-request'){
       if(!window.__html2canvasLoaded){
