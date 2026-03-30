@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { app, BrowserWindow, shell, ipcMain, NativeImage } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, NativeImage, Notification } from 'electron'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import fs from 'fs'
@@ -436,6 +436,24 @@ ipcMain.handle('analyze-screenshot', async (_, { screenshotBase64, actionDescrip
     return { status: 'success', analysis }
   } catch (error: any) {
     console.error('[Vision] Analysis failed:', error.message)
+    return { status: 'error', message: error.message }
+  }
+})
+
+// ── NOTIFICATION: Fire a desktop notification ────────────────────────────
+ipcMain.handle('show-notification', async (_, { title, body }) => {
+  try {
+    const notif = new Notification({ title: title || 'Yogi Browser', body: body || '' })
+    notif.on('click', () => {
+      if (win) {
+        if (win.isMinimized()) win.restore()
+        win.focus()
+      }
+    })
+    notif.show()
+    return { status: 'success' }
+  } catch (error: any) {
+    console.error('[Notification] Failed:', error.message)
     return { status: 'error', message: error.message }
   }
 })

@@ -67,6 +67,9 @@ const yogi = {
 
   captureSnapshot: () =>
     ipcRenderer.invoke('capture-snapshot'),
+
+  showNotification: (title: string, body: string) =>
+    ipcRenderer.invoke('show-notification', { title, body }),
 }
 
 // 🟢 THE FIX: Use both methods for maximum reliability

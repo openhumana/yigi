@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X, Rocket, Play, Pause, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, XCircle } from 'lucide-react'
 
 // Detect Electron environment (window.yogi is exposed by the preload bridge)
 const isElectron = !!(window as any).yogi
@@ -45,6 +45,81 @@ function mockBrowserState(workflow: string): MockElement[] {
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+type ExecLogEntry = {
+  id: string
+  timestamp: number
+  action: string
+  description: string
+  selector?: string
+  status: 'running' | 'success' | 'retry' | 'escalate' | 'skipped'
+  reason?: string
+  confidence?: number
+  retries?: number
+  elapsed?: number
+}
+
+const SAFETY_PATTERNS = [
+  { field: 'type', values: ['password'] },
+  { field: 'selector', values: ['credit-card', 'card-number', 'cvv', 'cvc', 'expiry'] },
+  { field: 'text', values: ['pay now', 'purchase', 'buy now', 'place order', 'confirm payment'] },
+  { field: 'text', values: ['delete', 'remove', 'destroy', 'erase', 'permanently'] },
+  { field: 'ariaLabel', values: ['delete', 'remove', 'pay', 'purchase'] },
+]
+
+function isSafetyRailTask(task: any, elements: any[]): string | null {
+  const sel = task.payload?.selector
+  const matchEl = elements.find((e: any) => e.selector === sel)
+  if (!matchEl) return null
+
+  const ctx = `${matchEl.text || ''} ${matchEl.ariaLabel || ''} ${matchEl.placeholder || ''} ${matchEl.selector || ''} ${matchEl.type || ''}`.toLowerCase()
+
+  for (const pattern of SAFETY_PATTERNS) {
+    for (const val of pattern.values) {
+      if (ctx.includes(val.toLowerCase())) {
+        return `Safety rail: contains "${val}" — requires manual approval`
+      }
+    }
+  }
+  return null
+}
+
+function playEscalationChime() {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.type = 'sine'
+    gain.gain.setValueAtTime(0.15, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8)
+
+    osc.frequency.setValueAtTime(523.25, ctx.currentTime)
+    osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.15)
+    osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.3)
+
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.8)
+  } catch (e) {}
+}
+
+async function fireNotification(title: string, body: string) {
+  if (isElectron) {
+    try {
+      await (window as any).yogi.showNotification(title, body)
+    } catch (e) {}
+  } else {
+    try {
+      if (Notification.permission === 'granted') {
+        new Notification(title, { body })
+      } else if (Notification.permission !== 'denied') {
+        const perm = await Notification.requestPermission()
+        if (perm === 'granted') new Notification(title, { body })
+      }
+    } catch (e) {}
+  }
+}
 
 async function mockAIResponse(
   userInput: string,
@@ -161,8 +236,31 @@ const App = () => {
   const [workflow, setWorkflow] = useState('reddit_post')
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<any>({})
-  const [isAutomating, setIsAutomating] = useState(false)
   const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null)
+
+  const [autoPilot, setAutoPilot] = useState(false)
+  const autoPilotRef = useRef(false)
+  const [escalation, setEscalation] = useState<{ message: string; taskId?: string } | null>(null)
+  const [executionLog, setExecutionLog] = useState<ExecLogEntry[]>([])
+  const [showExecLog, setShowExecLog] = useState(false)
+  const [autoExecuting, setAutoExecuting] = useState(false)
+  const autoExecutingRef = useRef(false)
+  const sessionStartRef = useRef<number>(Date.now())
+
+  useEffect(() => { autoPilotRef.current = autoPilot }, [autoPilot])
+  useEffect(() => { autoExecutingRef.current = autoExecuting }, [autoExecuting])
+
+  const addExecLog = useCallback((entry: Omit<ExecLogEntry, 'id' | 'timestamp'>) => {
+    setExecutionLog(prev => [...prev, {
+      ...entry,
+      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+    }])
+  }, [])
+
+  const updateExecLog = useCallback((id: string, updates: Partial<ExecLogEntry>) => {
+    setExecutionLog(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e))
+  }, [])
 
   // Resizable sidebar
   const [sidebarWidth, setSidebarWidth] = useState(parseInt(localStorage.getItem('sidebarWidth') || '400'))
@@ -647,11 +745,14 @@ ${currentInput}`
         }
 
         logVerification(`⚠ ESCALATE: ${lastResult.reason} — needs human help`)
-        setNotification({ message: `Action failed after ${MAX_RETRIES} retries: ${task.description}`, type: 'alert' })
-        setMessages(prev => [...prev, {
-          role: 'agent',
-          message: `⚠️ Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastResult.reason}`
-        }])
+        const escMsg = `Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastResult.reason}`
+        setNotification({ message: escMsg, type: 'alert' })
+        setMessages(prev => [...prev, { role: 'agent', message: `⚠️ ${escMsg}` }])
+        if (autoPilotRef.current) {
+          setEscalation({ message: escMsg, taskId: task.id })
+          playEscalationChime()
+          fireNotification('Yogi needs your help', escMsg)
+        }
       } else {
         const actionLabel = task.action === 'dom_type'
           ? `TYPE "${task.payload?.value?.slice(0, 40) ?? ''}" into ${task.payload?.selector}`
@@ -733,8 +834,14 @@ ${currentInput}`
 
           if (validation.captchaDetected) {
             logVerification(`🛑 CAPTCHA detected — escalating to human`)
-            setNotification({ message: 'CAPTCHA detected! Please solve it manually, then retry.', type: 'alert' })
+            const captchaMsg = 'CAPTCHA detected! Please solve it manually, then retry.'
+            setNotification({ message: captchaMsg, type: 'alert' })
             setMessages(prev => [...prev, { role: 'agent', message: `🛑 CAPTCHA detected — please solve it manually` }])
+            if (autoPilotRef.current) {
+              setEscalation({ message: captchaMsg, taskId: task.id })
+              playEscalationChime()
+              fireNotification('Yogi needs your help', captchaMsg)
+            }
             return
           }
 
@@ -774,11 +881,14 @@ ${currentInput}`
         }
 
         logVerification(`⚠ ESCALATE: ${lastValidation.reason} — needs human help`)
-        setNotification({ message: `Action failed: ${task.description}`, type: 'alert' })
-        setMessages(prev => [...prev, {
-          role: 'agent',
-          message: `⚠️ Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastValidation.reason}`
-        }])
+        const escMsg2 = `Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastValidation.reason}`
+        setNotification({ message: escMsg2, type: 'alert' })
+        setMessages(prev => [...prev, { role: 'agent', message: `⚠️ ${escMsg2}` }])
+        if (autoPilotRef.current) {
+          setEscalation({ message: escMsg2, taskId: task.id })
+          playEscalationChime()
+          fireNotification('Yogi needs your help', escMsg2)
+        }
       } else if (task.action === 'navigate') {
         const targetUrl = task.payload.url
         if (webviewRef.current && isElectron) {
@@ -800,6 +910,120 @@ ${currentInput}`
       setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Task Failed: ${e.message}` }])
     }
   }
+
+  const autoExecuteLoop = useCallback(async (taskQueue: any[]) => {
+    if (autoExecutingRef.current) return
+    setAutoExecuting(true)
+    sessionStartRef.current = Date.now()
+
+    const stepDelay = settings.autoStepDelay || 2000
+    const confThreshold = settings.confidenceThreshold ?? 70
+
+    let currentElements: any[] = proxyElementsRef.current
+    if (isElectron) {
+      try {
+        const state = await (window as any).yogi.getBrowserState()
+        if (state?.status === 'success' && state.elements) currentElements = state.elements
+      } catch (e) {}
+    }
+
+    for (let i = 0; i < taskQueue.length; i++) {
+      if (!autoPilotRef.current) {
+        addExecLog({ action: 'pause', description: 'Auto-Pilot turned OFF — paused', status: 'skipped' })
+        break
+      }
+
+      const task = taskQueue[i]
+      const safetyReason = isSafetyRailTask(task, currentElements)
+      if (safetyReason) {
+        addExecLog({
+          action: task.action,
+          description: task.description,
+          selector: task.payload?.selector,
+          status: 'skipped',
+          reason: safetyReason,
+        })
+        setNotification({ message: `${safetyReason}: "${task.description}"`, type: 'alert' })
+        continue
+      }
+
+      if (typeof task.confidence === 'number' && task.confidence < confThreshold) {
+        addExecLog({
+          action: task.action,
+          description: task.description,
+          selector: task.payload?.selector,
+          status: 'skipped',
+          reason: `Confidence ${task.confidence}% below threshold ${confThreshold}%`,
+          confidence: task.confidence,
+        })
+        setNotification({ message: `Low confidence (${task.confidence}%) — needs manual review: "${task.description}"`, type: 'alert' })
+        continue
+      }
+
+      const logId = `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const startTime = Date.now()
+      setExecutionLog(prev => [...prev, {
+        id: logId,
+        timestamp: Date.now(),
+        action: task.action,
+        description: task.description,
+        selector: task.payload?.selector,
+        status: 'running',
+      }])
+
+      try {
+        await approveTask(task.id)
+      } catch (e: any) {
+        updateExecLog(logId, {
+          status: 'escalate',
+          reason: e.message,
+          elapsed: Date.now() - startTime,
+        })
+        setEscalation({ message: `Action failed: ${task.description} — ${e.message}`, taskId: task.id })
+        playEscalationChime()
+        fireNotification('Yogi needs your help', `Action failed: ${task.description}`)
+        setAutoExecuting(false)
+        return
+      }
+
+      const elapsed = Date.now() - startTime
+      updateExecLog(logId, { status: 'success', elapsed })
+
+      if (i < taskQueue.length - 1 && autoPilotRef.current) {
+        await sleep(stepDelay)
+      }
+    }
+
+    setAutoExecuting(false)
+  }, [settings, addExecLog, updateExecLog])
+
+  useEffect(() => {
+    if (!autoPilot || tasks.length === 0 || autoExecutingRef.current) return
+    const tasksCopy = [...tasks]
+    autoExecuteLoop(tasksCopy)
+  }, [autoPilot, tasks, autoExecuteLoop])
+
+  const toggleAutoPilot = useCallback(() => {
+    setAutoPilot(prev => {
+      const next = !prev
+      if (!next && autoExecutingRef.current) {
+        addExecLog({ action: 'pause', description: 'Auto-Pilot paused by user', status: 'skipped' })
+      }
+      if (next) {
+        setEscalation(null)
+        sessionStartRef.current = Date.now()
+      }
+      return next
+    })
+  }, [addExecLog])
+
+  const resumeAfterEscalation = useCallback(() => {
+    setEscalation(null)
+    if (autoPilotRef.current && tasks.length > 0) {
+      const tasksCopy = [...tasks]
+      autoExecuteLoop(tasksCopy)
+    }
+  }, [tasks, autoExecuteLoop])
 
   // ── Browser controls ─────────────────────────────────────
   const handleUrlSubmit = (e: React.FormEvent) => {
@@ -856,19 +1080,26 @@ ${currentInput}`
         <div className="sidebar-header">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ margin: 0 }}>Yogi Browser</h2>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <button
-                className={`toggle-btn ${isAutomating ? 'active' : ''}`}
-                title={isAutomating ? 'Automation ON' : 'Automation OFF'}
-                onClick={() => setIsAutomating(v => !v)}
+                className={`autopilot-toggle ${autoPilot ? 'active' : ''}`}
+                title={autoPilot ? 'Auto-Pilot ON — click to pause' : 'Auto-Pilot OFF — click to enable'}
+                onClick={toggleAutoPilot}
               >
-                {isAutomating ? <ShieldCheck size={18} /> : <RotateCw size={18} />}
+                <Rocket size={16} />
+                <span className="autopilot-label">{autoPilot ? 'ON' : 'OFF'}</span>
               </button>
               <button className="nav-btn" title="Settings" onClick={() => setShowSettings(true)}>
                 <Settings size={20} />
               </button>
             </div>
           </div>
+          {autoPilot && (
+            <div className="autopilot-status">
+              <div className="autopilot-pulse" />
+              <span>{autoExecuting ? 'Yogi is working autonomously...' : 'Auto-Pilot ready — waiting for tasks'}</span>
+            </div>
+          )}
           <select className="workflow-select" value={workflow} onChange={(e) => setWorkflow(e.target.value)}>
             <option value="reddit_post">F: Reddit Poster</option>
             <option value="reddit_reply">E: Reddit Replier</option>
@@ -879,6 +1110,19 @@ ${currentInput}`
         {notification && (
           <div className={`notification ${notification.type}`} onClick={() => setNotification(null)}>
             {notification.message}
+          </div>
+        )}
+
+        {escalation && (
+          <div className="escalation-banner">
+            <div className="escalation-icon"><AlertTriangle size={18} /></div>
+            <div className="escalation-content">
+              <div className="escalation-title">Agent needs your help</div>
+              <div className="escalation-message">{escalation.message}</div>
+            </div>
+            <button className="escalation-resume" onClick={resumeAfterEscalation}>
+              <Play size={14} /> Resume
+            </button>
           </div>
         )}
 
@@ -917,18 +1161,62 @@ ${currentInput}`
           </div>
         )}
 
+        {/* ── Execution Log Panel ── */}
+        {executionLog.length > 0 && (
+          <div className="exec-log-panel">
+            <div className="exec-log-header" onClick={() => setShowExecLog(v => !v)}>
+              <div className="exec-log-title">
+                <Clock size={13} />
+                <span>EXECUTION LOG ({executionLog.length})</span>
+              </div>
+              {showExecLog ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+            </div>
+            {showExecLog && (
+              <div className="exec-log-entries">
+                {executionLog.slice().reverse().map(entry => (
+                  <div key={entry.id} className={`exec-log-entry exec-log-${entry.status}`}>
+                    <div className="exec-log-entry-icon">
+                      {entry.status === 'success' && <CheckCircle size={12} />}
+                      {entry.status === 'running' && <RotateCw size={12} className="spin" />}
+                      {entry.status === 'retry' && <AlertTriangle size={12} />}
+                      {entry.status === 'escalate' && <XCircle size={12} />}
+                      {entry.status === 'skipped' && <Pause size={12} />}
+                    </div>
+                    <div className="exec-log-entry-content">
+                      <div className="exec-log-entry-desc">{entry.description}</div>
+                      <div className="exec-log-entry-meta">
+                        {new Date(entry.timestamp).toLocaleTimeString()}
+                        {entry.elapsed != null && ` · ${(entry.elapsed / 1000).toFixed(1)}s`}
+                        {entry.reason && ` · ${entry.reason}`}
+                        {entry.confidence != null && ` · ${entry.confidence}%`}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── HITL Approval Queue ── */}
         {tasks.length > 0 && (
           <div className="task-queue">
-            <div className="task-queue-label">HITL APPROVAL QUEUE ({tasks.length})</div>
+            <div className="task-queue-label">
+              {autoPilot ? 'AUTO-EXECUTING' : 'HITL APPROVAL QUEUE'} ({tasks.length})
+            </div>
             {tasks.map(t => (
-              <div key={t.id} className="task-card">
+              <div key={t.id} className={`task-card ${autoPilot && !t.sensitive ? 'auto-task' : ''}`}>
                 <div className="task-card-header">
                   <span className="task-action">{t.action.replace('dom_', '').toUpperCase()}</span>
-                  <button className="approve-btn" onClick={() => approveTask(t.id)}>
-                    <ShieldCheck size={13} style={{ marginRight: '5px' }} />
-                    Approve
-                  </button>
+                  {(!autoPilot || t.sensitive) && (
+                    <button className="approve-btn" onClick={() => approveTask(t.id)}>
+                      <ShieldCheck size={13} style={{ marginRight: '5px' }} />
+                      Approve
+                    </button>
+                  )}
+                  {autoPilot && !t.sensitive && (
+                    <span className="auto-badge">AUTO</span>
+                  )}
                 </div>
                 <p className="task-desc">{t.description}</p>
                 {t.payload?.selector && (
@@ -1051,6 +1339,37 @@ ${currentInput}`
                   <label htmlFor="pdf-upload" className="approve-btn" style={{ cursor: 'pointer', background: 'rgba(82,134,255,0.2)', color: 'var(--primary)', border: '1px solid rgba(82,134,255,0.3)' }}>
                     Upload & Extract PDF
                   </label>
+                </div>
+              </div>
+              <div className="settings-field">
+                <label>Minimum Confidence to Auto-Execute ({settings.confidenceThreshold ?? 70}%)</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={settings.confidenceThreshold ?? 70}
+                  onChange={(e) => setSettings((s: any) => ({ ...s, confidenceThreshold: Number(e.target.value) }))}
+                  className="settings-slider"
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-dim)' }}>
+                  <span>0% (execute all)</span>
+                  <span>100% (manual only)</span>
+                </div>
+              </div>
+              <div className="settings-field">
+                <label>Auto-Pilot Step Delay ({((settings.autoStepDelay ?? 2000) / 1000).toFixed(1)}s)</label>
+                <input
+                  type="range"
+                  min={500}
+                  max={10000}
+                  step={500}
+                  value={settings.autoStepDelay ?? 2000}
+                  onChange={(e) => setSettings((s: any) => ({ ...s, autoStepDelay: Number(e.target.value) }))}
+                  className="settings-slider"
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-dim)' }}>
+                  <span>0.5s (fast)</span>
+                  <span>10s (careful)</span>
                 </div>
               </div>
               <button type="submit" className="approve-btn" style={{ width: '100%', marginTop: '12px', justifyContent: 'center' }}>

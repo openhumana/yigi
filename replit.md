@@ -45,8 +45,9 @@ Originally an Electron desktop application, adapted to run as a web app in the R
 | `validate-action` | renderer→main | Runs verify-after-action loop (before/after comparison) |
 | `analyze-screenshot` | renderer→main | Sends screenshot to vision LLM for analysis |
 | `capture-snapshot` | renderer→main | Captures full browser state snapshot (URL + title + elements) |
+| `show-notification` | renderer→main | Fires Electron desktop notification (clicks bring Yogi to foreground) |
 
-## Automation Flow (with Verify Loop)
+## Automation Flow (with Verify Loop + Auto-Pilot)
 
 ```
 User types command
@@ -56,17 +57,42 @@ User types command
   → If AI sets requestScreenshot=true, captures screenshot and sends to vision LLM
   → Orchestrator returns { thought, tasks[], confidence, requestScreenshot }
   → thought shown in chat; tasks appear in HITL queue
+
+  Manual mode (Auto-Pilot OFF):
   → User clicks Approve → approveTask()
+
+  Auto-Pilot mode (Auto-Pilot ON):
+  → autoExecuteLoop processes tasks sequentially with configurable delay
+  → Safety rails check: password/payment/delete → always requires manual approval
+  → Confidence threshold: tasks below threshold → manual review
+  → Each task runs through verify-after-action loop:
     → BEFORE: capture browser snapshot (URL, title, elements)
     → EXECUTE: dom-action IPC
-    → WAIT: page stability detector (DOM mutations stop for 500ms)
+    → WAIT: page stability detector (DOM mutations + network idle)
     → AFTER: re-capture browser snapshot
-    → VALIDATE: compare before/after (URL change, element delta, target disappearance)
-    → If validation=success: show green confirmation + log
-    → If validation=retry: exponential backoff (1s, 2s, 4s), up to 3 retries
-    → If validation=escalate: pause, notify user, show alert
+    → VALIDATE: compare before/after (heuristic + LLM fallback for ambiguous cases)
+    → If validation=success: log + proceed to next task
+    → If validation=retry: exponential backoff (1s, 2s, 4s), alternative selectors, up to 3 retries
+    → If validation=escalate: pause loop, show escalation banner, fire notification, play chime
     → If confidence<50: trigger visual verification via screenshot + vision LLM
+
+  Escalation:
+  → Escalation banner with "Agent needs your help" message
+  → Desktop notification (Electron Notification API / browser Notification API fallback)
+  → Sound alert via Web Audio API (gentle chime)
+  → User can Resume after manual intervention
+  → User can toggle Auto-Pilot OFF to take over manually at any time
 ```
+
+## Auto-Pilot System
+
+- **Toggle**: Rocket icon button in sidebar header, shows ON/OFF state
+- **Pulsing indicator**: Shows when auto-pilot is active with "Yogi is working autonomously..."
+- **Execution log**: Expandable timeline panel showing all auto-executed actions with status icons (success/retry/escalate/skipped), timestamps, elapsed time
+- **Confidence threshold**: Settings slider (0-100%, default 70%) — tasks below threshold pause for manual review
+- **Step delay**: Settings slider (0.5s-10s, default 2s) — configurable pause between auto-executed steps
+- **Safety rails**: Always-confirm patterns for password fields, payment forms, delete/remove buttons
+- **Take-over flow**: Toggle OFF pauses after current action; remaining tasks become manual approval cards; toggle ON resumes
 
 ## Validator Module (main/validator.ts)
 
