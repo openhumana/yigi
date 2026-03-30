@@ -178,6 +178,94 @@ For each research target, capture:
   }),
 
   createSkill({
+    id: 'skill-openhumana-brand-voice',
+    name: 'OpenHumana Brand Voice',
+    description: 'Deep brand context for OpenHumana: voice, positioning, indirect promotion strategy, and what never to say.',
+    builtIn: true,
+    priority: 95,
+    activationTriggers: [
+      { type: 'url_pattern', value: 'reddit.com' },
+      { type: 'mission_type', value: 'reddit' },
+      { type: 'mission_type', value: 'post content campaign' },
+      { type: 'mission_type', value: 'engagement patrol' },
+      { type: 'mission_type', value: 'subreddit monitor' },
+    ],
+    content: `# OpenHumana Brand Voice
+
+## What OpenHumana Does
+OpenHumana: AI voice agents for outbound sales — automates cold calling, lead qualification, and appointment setting. Target verticals: wholesale real estate, insurance, solar/home services, outbound B2B sales.
+
+## Indirect Promotion Strategy (never lead with the product)
+1. Establish credibility — share data-backed insights about outbound sales pain points
+2. Surface pain points — name specific frustrations (low connect rates, rep burnout, manual dialing)
+3. Let people ask — end posts with open questions; only mention OpenHumana if someone asks directly
+
+## Voice Rules
+- Write as a peer practitioner, NOT a vendor
+- Ground claims in numbers and real outcomes; no superlatives
+- Plain-spoken and direct; empathetic about how hard outbound is
+
+## NEVER Say
+- Never name "OpenHumana" unless explicitly instructed
+- Never use: AI dialer, AI voice agent, or product-category pitch language
+- Never use: revolutionize, disrupt, game-changer, cutting-edge
+- Never include links to openhumana.com in posts
+- Never repost identical content across multiple subreddits
+
+## Post Opener Examples
+- "We ran 10,000 cold calls last quarter — here's what the data showed about connect rates..."
+- "Unpopular opinion: most outbound teams have a follow-up problem, not a prospecting problem..."
+- "I've worked with insurance agents doing 200 dials a day. The single biggest mistake I see is..."
+- "Wholesale real estate cold calling is brutal right now. Here's the pattern I'm seeing..."
+
+## Success Criteria
+Post reads like authentic community member content. No brand mentions. Someone asks "what system are you using?" — that's the goal.`,
+  }),
+
+  createSkill({
+    id: 'skill-subreddit-intelligence',
+    name: 'Subreddit Intelligence',
+    description: 'Curated database of 20+ subreddits organized by industry with audience profiles, posting frequency, content guidance, and self-promotion rules.',
+    builtIn: true,
+    priority: 92,
+    activationTriggers: [
+      { type: 'url_pattern', value: 'reddit.com' },
+      { type: 'mission_type', value: 'reddit' },
+      { type: 'mission_type', value: 'post content campaign' },
+      { type: 'mission_type', value: 'engagement patrol' },
+      { type: 'mission_type', value: 'subreddit monitor' },
+    ],
+    content: `# Subreddit Intelligence
+
+## Subreddit Map (Industry → Best Subreddits)
+**Outbound sales / cold calling**: r/sales (2x/wk, no promo), r/coldcalling (3x/wk, moderate promo ok), r/B2BSales (2x/wk, low promo), r/coldemail (3x/wk, no tool promo), r/leadgeneration (2x/wk, disclose), r/salesops (1x/wk, no promo)
+**Wholesale real estate**: r/WholesaleRealEstate (3x/wk, moderate promo ok), r/realestateinvesting (2x/wk, low promo), r/realestate (1x/wk, no promo), r/REIclub (2x/wk, low promo)
+**Insurance**: r/InsuranceAgent (2x/wk, limited promo), r/InsuranceProfessional (1x/wk, no promo)
+**Solar / home services**: r/solar (1x/wk, no promo), r/solarenergy (1x/wk, no promo), r/HomeImprovement (1x/2wk, no promo), r/SolarDIY (1x/2wk, no promo), r/SolarInstallation (1x/wk, moderate promo ok)
+**General business**: r/entrepreneur (2x/wk, low promo), r/smallbusiness (2x/wk, disclose), r/startups (2x/wk, low promo), r/marketing (2x/wk, no promo), r/digital_marketing (2x/wk, low promo), r/salesforce (1x/wk, no promo)
+
+## Topic → Subreddit Routing
+- Cold calling / dialing / connect rates → r/coldcalling, r/sales
+- SDR / outbound / prospecting → r/sales, r/B2BSales
+- Skip tracing / motivated sellers / wholesale → r/WholesaleRealEstate
+- Insurance leads / agent prospecting → r/InsuranceAgent
+- Solar appointment setting → r/solar, r/SolarInstallation
+- General outbound / AI calling → r/sales, r/entrepreneur
+
+## What Performs Well (Universal Rules)
+- Data-backed insights with real numbers
+- "What actually worked / what failed" stories
+- Tactical how-to posts (not theory)
+- Honest takes on industry pain points
+
+## Thread Engagement Criteria
+Only reply if ALL three: (1) real specific problem, (2) fewer than 20 replies, (3) posted within 48 hours.
+
+## Engagement Keywords to Search
+cold calling, outbound, SDR, BDR, prospecting, connect rate, appointment setting, skip tracing, insurance leads, lead gen, power dialer, rep burnout`,
+  }),
+
+  createSkill({
     id: 'skill-custom-template',
     name: 'Custom Skill Template',
     description: 'A blank template with instructions for creating your own skills.',

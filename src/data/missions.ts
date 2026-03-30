@@ -181,4 +181,112 @@ export const MISSION_TEMPLATES: Mission[] = [
       }),
     ],
   }),
+
+  createMission({
+    id: 'template-post-content-campaign',
+    name: 'Post Content Campaign',
+    description: 'Draft and publish value-first posts for a list of topics. Before running: edit the topic list in the "Topics" loop task items OR type your topics in the Mission Knowledge Base (one topic per line). Each topic gets its own post: best-fit subreddit auto-selected, community tone absorbed, post drafted in OpenHumana brand voice, published with 60-second spacing.',
+    status: 'draft',
+    knowledgeBase: 'TOPICS (edit this list before running — one topic per line):\ncold calling connect rates and what actually moves the needle\ninsurance agent prospecting tactics that work for outbound in 2025\nwholesale real estate skip tracing and list quality',
+    tasks: [
+      createMissionTask({
+        id: 'pcc-1',
+        description: 'Navigate to reddit.com to verify the browser session is active and the account is logged in (username visible in top navigation bar). Note any pending notifications. The topics to post about are configured in the loop task items — edit them in the Mission Editor before running this mission.',
+        targetUrl: 'https://www.reddit.com',
+        successCriteria: 'Reddit homepage loaded and account is logged in.',
+        type: 'action',
+      }),
+      createMissionTask({
+        id: 'pcc-2',
+        description: 'Process topic: "{{topic}}". Complete ALL steps before moving to the next iteration: (1) Using the Subreddit Intelligence skill, identify the best-fit subreddit — cold calling → r/coldcalling or r/sales; insurance → r/InsuranceAgent; real estate → r/WholesaleRealEstate; solar → r/solar; outbound B2B → r/B2BSales. (2) Navigate to that subreddit. (3) Read the top 5 posts to absorb current community tone and active themes. (4) Draft a post title and body using the OpenHumana Brand Voice skill: write as a peer practitioner, open with a data-driven hook or relatable problem, 3-5 paragraphs of actionable insight, close with a soft open question — zero brand mentions, zero links. (5) Click "Create Post", fill in title and body, select flair if available, then submit. (6) Note the published URL from the browser address bar. (7) Wait 60 seconds before ending this iteration.',
+        successCriteria: 'Post for topic "{{topic}}" is submitted and URL noted. Post has zero brand names and zero links. 60-second wait completed.',
+        type: 'loop',
+        dependsOn: ['pcc-1'],
+        loopConfig: {
+          source: 'hardcoded',
+          items: [
+            'cold calling connect rates and what actually moves the needle',
+            'insurance agent prospecting tactics that work for outbound in 2025',
+            'wholesale real estate skip tracing and list quality',
+          ],
+          variableName: 'topic',
+        },
+      }),
+      createMissionTask({
+        id: 'pcc-3',
+        description: 'Compile and present a campaign summary report. For each topic processed in the loop, list: (1) the topic, (2) the subreddit chosen and why, (3) the post title used, (4) the published post URL. Format as a numbered list. Flag any topics that encountered posting restrictions (karma, account age) or other errors.',
+        successCriteria: 'Summary report presented with all processed topics, their subreddits, post titles, and published URLs.',
+        type: 'action',
+        dependsOn: ['pcc-2'],
+      }),
+    ],
+  }),
+
+  createMission({
+    id: 'template-engagement-patrol',
+    name: 'Engagement Patrol',
+    description: 'Search each target subreddit for recent qualifying threads, read each matching thread, and post a helpful non-promotional reply. Runs across r/sales, r/B2BSales, r/WholesaleRealEstate, r/InsuranceAgent, and r/coldcalling.',
+    status: 'draft',
+    tasks: [
+      createMissionTask({
+        id: 'ep-1',
+        description: 'Full engagement patrol for subreddit search URL: {{subreddit_search_url}}. Complete ALL steps for this subreddit before moving on: (1) Navigate to this search URL. (2) Scan the results — a thread qualifies if: the person has a real, specific problem; fewer than 20 existing replies; posted within the last 48 hours. (3) For EACH qualifying thread found: (a) click into the thread, (b) read the original post and all existing replies, (c) draft a helpful reply using the OpenHumana Brand Voice skill — lead with empathy, provide specific actionable advice the OP can use today, reference real-world data or experience, zero brand mentions, zero links, end with an open question, (d) click the Reply button on the original post, submit the reply, and confirm it is visible. (4) After processing all qualifying threads in this subreddit, move to the next subreddit in the loop.',
+        targetUrl: 'https://www.reddit.com/r/sales/search/?q=cold+calling+outbound+SDR&sort=new&t=week',
+        successCriteria: 'All qualifying threads in this subreddit have been read and replied to. Each reply is visible under its post.',
+        type: 'loop',
+        loopConfig: {
+          source: 'hardcoded',
+          items: [
+            'https://www.reddit.com/r/sales/search/?q=cold+calling+outbound+SDR&sort=new&t=week',
+            'https://www.reddit.com/r/B2BSales/search/?q=prospecting+outbound+connect+rate&sort=new&t=week',
+            'https://www.reddit.com/r/WholesaleRealEstate/search/?q=cold+calling+skip+tracing&sort=new&t=week',
+            'https://www.reddit.com/r/InsuranceAgent/search/?q=prospecting+outbound+leads&sort=new&t=week',
+            'https://www.reddit.com/r/coldcalling/search/?q=connect+rate+script+objection&sort=new&t=week',
+          ],
+          variableName: 'subreddit_search_url',
+        },
+      }),
+      createMissionTask({
+        id: 'ep-2',
+        description: 'Patrol complete. Compile a summary of all replies posted during this session. For each reply posted, include: (1) subreddit, (2) thread title, (3) thread URL, (4) one-sentence summary of the reply angle used. Present this summary to the user.',
+        successCriteria: 'Summary of all replies posted across all subreddits has been presented to the user',
+        type: 'action',
+        dependsOn: ['ep-1'],
+      }),
+    ],
+  }),
+
+  createMission({
+    id: 'template-subreddit-monitor',
+    name: 'Subreddit Monitor',
+    description: 'Scan the "new" feeds of target subreddits, identify threads matching engagement criteria, click into each opportunity to assess it, then report the full opportunity list to the user — without posting any replies.',
+    status: 'draft',
+    tasks: [
+      createMissionTask({
+        id: 'sm-1',
+        description: 'Scan and assess opportunities in subreddit: {{subreddit_url}}. Complete ALL steps for this subreddit: (1) Navigate to this /new/ feed URL. (2) Review the first 10 visible post titles — evaluate each against these criteria: does the title suggest a real problem about cold calling, outbound sales, prospecting, lead generation, appointment setting, skip tracing, insurance leads, or real estate outreach? Is it within the last 48 hours? Does it have fewer than 20 replies? (3) For each post that meets ALL three criteria: click into the thread, read the full original post, assess the specific problem and what reply angle would add value, then note: thread title, thread URL, post age, reply count, the person\'s specific problem, and the suggested engagement angle. (4) Do NOT post any replies — this is monitor-only. (5) Navigate back to the subreddit list before ending this iteration.',
+        targetUrl: 'https://www.reddit.com/r/sales/new/',
+        successCriteria: 'All 10 visible posts reviewed. Each qualifying opportunity has been clicked into and assessed with title, URL, age, reply count, problem summary, and engagement angle noted.',
+        type: 'loop',
+        loopConfig: {
+          source: 'hardcoded',
+          items: [
+            'https://www.reddit.com/r/sales/new/',
+            'https://www.reddit.com/r/B2BSales/new/',
+            'https://www.reddit.com/r/WholesaleRealEstate/new/',
+            'https://www.reddit.com/r/InsuranceAgent/new/',
+            'https://www.reddit.com/r/coldcalling/new/',
+          ],
+          variableName: 'subreddit_url',
+        },
+      }),
+      createMissionTask({
+        id: 'sm-2',
+        description: 'Compile all identified opportunities from all subreddits scanned and present the full report to the user as a numbered list. For each opportunity include all 7 data points: (1) subreddit name, (2) post title, (3) post URL, (4) post age, (5) current reply count, (6) the person\'s specific problem or question, (7) the suggested reply angle — what type of insight or answer would add genuine value. Do NOT post any replies. Present the complete list and await the user\'s instructions on which threads to engage with.',
+        successCriteria: 'A numbered list of all engagement opportunities has been presented with all 7 data points per entry. Zero replies have been posted.',
+        type: 'action',
+        dependsOn: ['sm-1'],
+      }),
+    ],
+  }),
 ]
