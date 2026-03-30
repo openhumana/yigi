@@ -5,23 +5,29 @@ import { ChevronLeft, Plus, BookOpen, ToggleLeft, ToggleRight } from 'lucide-rea
 interface Props {
   skills: Skill[]
   currentUrl: string
+  manuallyActivated: Set<string>
   onSave: (skill: Skill) => void
   onDelete: (id: string) => void
   onToggle: (id: string, enabled: boolean) => void
+  onManualToggle: (id: string, active: boolean) => void
   onClose: () => void
 }
 
-const SkillsLibrary: React.FC<Props> = ({ skills, currentUrl, onSave, onDelete, onToggle, onClose }) => {
+const SkillsLibrary: React.FC<Props> = ({ skills, currentUrl, manuallyActivated, onSave, onDelete, onToggle, onManualToggle, onClose }) => {
   const [editing, setEditing] = useState<Skill | null>(null)
   const [showEditor, setShowEditor] = useState(false)
 
   const isActive = (skill: Skill): boolean => {
     if (!skill.enabled) return false
+    if (manuallyActivated.has(skill.id)) return true
     return skill.activationTriggers.some(trigger => {
       if (trigger.type === 'url_pattern') return currentUrl.toLowerCase().includes(trigger.value.toLowerCase())
-      if (trigger.type === 'manual') return false
       return false
     })
+  }
+
+  const hasManualTrigger = (skill: Skill): boolean => {
+    return skill.activationTriggers.some(t => t.type === 'manual')
   }
 
   const handleNew = () => {
@@ -201,6 +207,17 @@ const SkillsLibrary: React.FC<Props> = ({ skills, currentUrl, onSave, onDelete, 
             <div className="skill-card-top">
               <BookOpen size={14} />
               <span className="skill-card-name">{skill.name}</span>
+              {hasManualTrigger(skill) && skill.enabled && (
+                <button
+                  className="skill-manual-activate"
+                  onClick={e => {
+                    e.stopPropagation()
+                    onManualToggle(skill.id, !manuallyActivated.has(skill.id))
+                  }}
+                >
+                  {manuallyActivated.has(skill.id) ? 'Deactivate' : 'Activate'}
+                </button>
+              )}
               <button
                 className="skill-toggle"
                 onClick={e => { e.stopPropagation(); onToggle(skill.id, !skill.enabled) }}

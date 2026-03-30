@@ -386,24 +386,51 @@ const App = () => {
     loadSkills()
   }, [])
 
+  const [manuallyActivatedSkills, setManuallyActivatedSkills] = useState<Set<string>>(new Set())
+
+  const handleManualSkillToggle = useCallback((skillId: string, active: boolean) => {
+    setManuallyActivatedSkills(prev => {
+      const next = new Set(prev)
+      if (active) next.add(skillId)
+      else next.delete(skillId)
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     const activeMissionType = activeMission?.name?.toLowerCase() || ''
+    const MAX_SKILL_CHARS = 8000
 
     const activeSkills = skills
       .filter(s => s.enabled)
-      .filter(s => s.activationTriggers.some(t => {
-        if (t.type === 'url_pattern') return inputUrl.toLowerCase().includes(t.value.toLowerCase())
-        if (t.type === 'mission_type' && activeMissionType) return activeMissionType.includes(t.value.toLowerCase())
-        return false
-      }))
+      .filter(s => {
+        if (manuallyActivatedSkills.has(s.id)) return true
+        return s.activationTriggers.some(t => {
+          if (t.type === 'url_pattern') return inputUrl.toLowerCase().includes(t.value.toLowerCase())
+          if (t.type === 'mission_type' && activeMissionType) return activeMissionType.includes(t.value.toLowerCase())
+          if (t.type === 'manual') return manuallyActivatedSkills.has(s.id)
+          return false
+        })
+      })
       .sort((a, b) => b.priority - a.priority)
 
-    const content = activeSkills.map(s => `--- SKILL: ${s.name} ---\n${s.content}`).join('\n\n')
+    let totalChars = 0
+    const budgetedSkills: typeof activeSkills = []
+    for (const s of activeSkills) {
+      const entryLen = s.name.length + s.content.length + 20
+      if (totalChars + entryLen > MAX_SKILL_CHARS) {
+        break
+      }
+      budgetedSkills.push(s)
+      totalChars += entryLen
+    }
+
+    const content = budgetedSkills.map(s => `--- SKILL: ${s.name} ---\n${s.content}`).join('\n\n')
 
     if (isElectron) {
       (window as any).yogi.injectSkills(content)
     }
-  }, [inputUrl, skills, activeMission])
+  }, [inputUrl, skills, activeMission, manuallyActivatedSkills])
 
   const handleSaveMission = useCallback((mission: Mission) => {
     setMissions(prev => {
@@ -467,6 +494,19 @@ const App = () => {
     })
   }, [])
 
+  const taskQueueRef = useRef<any[]>([])
+  useEffect(() => { taskQueueRef.current = tasks }, [tasks])
+
+  const taskDrainResolversRef = useRef<Array<() => void>>([])
+
+  useEffect(() => {
+    if (tasks.length === 0 && taskDrainResolversRef.current.length > 0) {
+      const resolvers = [...taskDrainResolversRef.current]
+      taskDrainResolversRef.current = []
+      resolvers.forEach(r => r())
+    }
+  }, [tasks])
+
   const missionRunner = useMissionRunner({
     sendChat: async (prompt: string) => {
       setInput('')
@@ -514,6 +554,14 @@ const App = () => {
       setNotification({
         message: `Mission "${m.name}" paused at task ${completedCount}/${m.tasks.length}`,
         type: 'alert'
+      })
+    },
+    getTaskQueueLength: () => taskQueueRef.current.length,
+    waitForTaskQueueDrain: () => {
+      if (taskQueueRef.current.length === 0) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        taskDrainResolversRef.current.push(resolve)
+        setTimeout(resolve, 60000)
       })
     },
   })
@@ -1475,9 +1523,11 @@ ${currentInput}`
           <SkillsLibrary
             skills={skills}
             currentUrl={inputUrl}
+            manuallyActivated={manuallyActivatedSkills}
             onSave={handleSaveSkill}
             onDelete={handleDeleteSkill}
             onToggle={handleToggleSkill}
+            onManualToggle={handleManualSkillToggle}
             onClose={() => setSidePanel('chat')}
           />
         )}

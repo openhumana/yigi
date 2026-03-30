@@ -459,21 +459,110 @@ ipcMain.handle('show-notification', async (_, { title, body }) => {
 })
 
 // ── MISSIONS & SKILLS PERSISTENCE ─────────────────────────────────────
+import { homedir } from 'node:os'
+import * as yaml from 'yaml'
+
+const SKILLS_DIR = join(homedir(), '.yogibrowser', 'skills')
+
+function ensureSkillsDir() {
+  if (!fs.existsSync(SKILLS_DIR)) {
+    fs.mkdirSync(SKILLS_DIR, { recursive: true })
+  }
+}
+
+function skillToMarkdown(skill: any): string {
+  const frontmatter: any = {
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    enabled: skill.enabled,
+    priority: skill.priority,
+    builtIn: skill.builtIn,
+    createdAt: skill.createdAt,
+    updatedAt: skill.updatedAt,
+    activationTriggers: skill.activationTriggers,
+  }
+  return `---\n${yaml.stringify(frontmatter)}---\n\n${skill.content}`
+}
+
+function markdownToSkill(fileContent: string): any | null {
+  const match = fileContent.match(/^---\n([\s\S]*?)\n---\n\n?([\s\S]*)$/)
+  if (!match) return null
+  try {
+    const meta = yaml.parse(match[1])
+    return {
+      id: meta.id || '',
+      name: meta.name || '',
+      description: meta.description || '',
+      content: match[2] || '',
+      activationTriggers: meta.activationTriggers || [],
+      enabled: meta.enabled !== false,
+      priority: meta.priority ?? 50,
+      builtIn: meta.builtIn || false,
+      createdAt: meta.createdAt || Date.now(),
+      updatedAt: meta.updatedAt || Date.now(),
+    }
+  } catch {
+    return null
+  }
+}
+
+function loadSkillsFromFs(): any[] {
+  ensureSkillsDir()
+  const files = fs.readdirSync(SKILLS_DIR).filter(f => f.endsWith('.md'))
+  const skills: any[] = []
+  for (const file of files) {
+    const content = fs.readFileSync(join(SKILLS_DIR, file), 'utf-8')
+    const skill = markdownToSkill(content)
+    if (skill) skills.push(skill)
+  }
+  return skills
+}
+
+function saveSkillToFs(skill: any) {
+  ensureSkillsDir()
+  const safeName = skill.id.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const filePath = join(SKILLS_DIR, `${safeName}.md`)
+  fs.writeFileSync(filePath, skillToMarkdown(skill), 'utf-8')
+}
+
+function saveAllSkillsToFs(skills: any[]) {
+  ensureSkillsDir()
+  const existing = fs.readdirSync(SKILLS_DIR).filter(f => f.endsWith('.md'))
+  for (const f of existing) {
+    fs.unlinkSync(join(SKILLS_DIR, f))
+  }
+  for (const skill of skills) {
+    saveSkillToFs(skill)
+  }
+}
+
 ipcMain.handle('get-missions', () => {
-  return (orchestrator.store.get('MISSIONS') as any[]) || []
+  return (orchestrator.store.get('missions') as any[]) || []
 })
 
 ipcMain.handle('save-missions', (_, missions) => {
-  orchestrator.store.set('MISSIONS', missions)
+  orchestrator.store.set('missions', missions)
   return { status: 'success' }
 })
 
 ipcMain.handle('get-skills', () => {
-  return (orchestrator.store.get('SKILLS') as any[]) || []
+  try {
+    const fsSkills = loadSkillsFromFs()
+    if (fsSkills.length > 0) return fsSkills
+  } catch (e: any) {
+    console.warn('[Skills] Filesystem load failed, falling back to store:', e.message)
+  }
+  return (orchestrator.store.get('skills') as any[]) || []
 })
 
 ipcMain.handle('save-skills', (_, skills) => {
-  orchestrator.store.set('SKILLS', skills)
+  try {
+    saveAllSkillsToFs(skills)
+  } catch (e: any) {
+    console.warn('[Skills] Filesystem save failed, falling back to store:', e.message)
+  }
+  orchestrator.store.set('skills', skills)
   return { status: 'success' }
 })
 

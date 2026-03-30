@@ -18,6 +18,8 @@ interface RunnerCallbacks {
   saveMission: (mission: Mission) => void
   onComplete: (mission: Mission) => void
   onPaused: (mission: Mission) => void
+  getTaskQueueLength: () => number
+  waitForTaskQueueDrain: () => Promise<void>
 }
 
 export function useMissionRunner(callbacks: RunnerCallbacks) {
@@ -63,6 +65,22 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       updatedAt: Date.now(),
     }))
   }, [updateMission])
+
+  const waitForExecution = useCallback(async () => {
+    await sleep(500)
+    if (isAborted()) return
+
+    const maxWait = 60000
+    const start = Date.now()
+    while (Date.now() - start < maxWait && !isAborted()) {
+      const queueLen = callbacksRef.current.getTaskQueueLength()
+      if (queueLen === 0) break
+      callbacksRef.current.addLog(`[Mission] Waiting for ${queueLen} queued action(s) to complete...`, 'info')
+      await callbacksRef.current.waitForTaskQueueDrain()
+      await sleep(500)
+      if (isAborted()) return
+    }
+  }, [])
 
   const evaluateCondition = useCallback(async (task: MissionTask): Promise<boolean> => {
     const config = task.conditionConfig
@@ -136,8 +154,8 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       if (matched.length > 0) {
         return matched.map(el => el.text || el.selector)
       }
-      callbacksRef.current.addLog(`[Mission] Loop selector "${config.selector}" matched 0 elements, using element text fallback`, 'info')
-      return elements.slice(0, 5).map(el => el.text || el.selector)
+      callbacksRef.current.addLog(`[Mission] Loop selector "${config.selector}" matched 0 elements`, 'alert')
+      return []
     }
 
     if (config.source === 'previous_task' && config.previousTaskId) {
@@ -147,9 +165,11 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           const parsed = JSON.parse(result)
           if (Array.isArray(parsed)) return parsed.map(String)
         } catch {}
-        return result.split('\n').filter(line => line.trim().length > 0)
+        const lines = result.split('\n').filter(line => line.trim().length > 0)
+        if (lines.length > 0) return lines
       }
-      callbacksRef.current.addLog(`[Mission] No output from task ${config.previousTaskId} for loop source`, 'info')
+      callbacksRef.current.addLog(`[Mission] No usable output from task ${config.previousTaskId} for loop`, 'alert')
+      return []
     }
 
     return []
@@ -186,6 +206,10 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       }
     }
 
+    if (elements.length === 0) {
+      return { met: false, reason: 'Cannot verify — no browser elements available' }
+    }
+
     const pageText = elements.map(el => el.text).join(' ').toLowerCase()
     const criteriaWords = criteria.split(/\s+/).filter(w => w.length > 3)
     const matchCount = criteriaWords.filter(w => pageText.includes(w.toLowerCase())).length
@@ -193,7 +217,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       return { met: true, reason: `Page content matches ${matchCount}/${criteriaWords.length} criteria keywords` }
     }
 
-    return { met: true, reason: 'Success criteria check passed (heuristic)' }
+    return { met: false, reason: `Success criteria could not be verified: "${criteria}"` }
   }, [])
 
   const executeTask = useCallback(async (task: MissionTask): Promise<boolean> => {
@@ -219,10 +243,8 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
         )
 
         if (conditionMet && config?.thenTaskId) {
-          callbacksRef.current.addLog(`[Mission] Condition met — proceeding to then-branch`, 'info')
           if (config.elseTaskId) updateTask(config.elseTaskId, { status: 'skipped' })
         } else if (!conditionMet && config?.elseTaskId) {
-          callbacksRef.current.addLog(`[Mission] Condition not met — proceeding to else-branch`, 'info')
           if (config.thenTaskId) updateTask(config.thenTaskId, { status: 'skipped' })
         } else if (!conditionMet) {
           callbacksRef.current.addLog(`[Mission] Condition not met and no else-branch — skipping`, 'info')
@@ -233,7 +255,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
         if (isAborted()) return false
         const prompt = buildTaskPrompt(task)
         await callbacksRef.current.sendChat(prompt)
-        await sleep(2000)
+        await waitForExecution()
         if (isAborted()) return false
 
         updateTask(task.id, { status: 'completed' })
@@ -262,7 +284,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
 
           callbacksRef.current.addLog(`[Mission] Loop iteration ${i + 1}/${total}: ${item}`, 'info')
           await callbacksRef.current.sendChat(prompt)
-          await sleep(2000)
+          await waitForExecution()
           if (isAborted()) break
           completedIterations = i + 1
         }
@@ -279,7 +301,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       if (isAborted()) return false
       const prompt = buildTaskPrompt(task)
       await callbacksRef.current.sendChat(prompt)
-      await sleep(2000)
+      await waitForExecution()
       if (isAborted()) return false
 
       if (task.successCriteria) {
@@ -289,6 +311,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           verification.met ? 'info' : 'alert'
         )
         if (!verification.met) {
+          taskResultsRef.current[task.id] = `Failed: ${verification.reason}`
           updateTask(task.id, { status: 'failed', result: verification.reason })
           return false
         }
@@ -300,21 +323,13 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     } catch (err: any) {
       if (isAborted()) return false
       callbacksRef.current.addLog(`[Mission] Task failed: ${err.message || err}`, 'alert')
+      taskResultsRef.current[task.id] = `Error: ${err.message || String(err)}`
       updateTask(task.id, { status: 'failed', result: err.message || String(err) })
       return false
     }
-  }, [evaluateCondition, resolveLoopItems, verifySuccessCriteria, updateTask])
+  }, [evaluateCondition, resolveLoopItems, verifySuccessCriteria, updateTask, waitForExecution])
 
-  const runMission = useCallback(async (mission: Mission) => {
-    abortRef.current = false
-    taskResultsRef.current = {}
-    missionRef.current = { ...mission, status: 'active', updatedAt: Date.now() }
-    runningRef.current = true
-    pausedRef.current = false
-
-    callbacksRef.current.saveMission(missionRef.current)
-    callbacksRef.current.addLog(`[Mission] Starting: ${mission.name}`, 'info')
-
+  const runMissionLoop = useCallback(async () => {
     try {
       while (runningRef.current && !abortRef.current) {
         if (pausedRef.current) {
@@ -399,6 +414,26 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     }
   }, [getNextTask, executeTask, updateMission, updateTask])
 
+  const runMission = useCallback(async (mission: Mission) => {
+    abortRef.current = false
+    taskResultsRef.current = {}
+    missionRef.current = {
+      ...mission,
+      status: 'active',
+      tasks: mission.tasks.map(t => ({ ...t, status: 'pending' as const })),
+      completedTaskIds: [],
+      currentTaskIndex: 0,
+      updatedAt: Date.now(),
+    }
+    runningRef.current = true
+    pausedRef.current = false
+
+    callbacksRef.current.saveMission(missionRef.current)
+    callbacksRef.current.addLog(`[Mission] Starting: ${mission.name}`, 'info')
+
+    await runMissionLoop()
+  }, [runMissionLoop])
+
   const pauseMission = useCallback(() => {
     pausedRef.current = true
     updateMission(m => ({ ...m, status: 'paused', updatedAt: Date.now() }))
@@ -413,69 +448,22 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       runningRef.current = true
       pausedRef.current = false
       callbacksRef.current.saveMission(missionRef.current)
-      callbacksRef.current.addLog(`[Mission] Resuming: ${mission.name}`, 'info')
 
-      try {
-        while (runningRef.current && !abortRef.current) {
-          if (pausedRef.current) {
-            await sleep(500)
-            continue
-          }
-          const task = getNextTask()
-          if (!task) {
-            const m = missionRef.current!
-            const allDone = m.tasks.every(t =>
-              t.status === 'completed' || t.status === 'skipped' || t.status === 'failed'
-            )
-            const hasBlocked = m.tasks.some(t => {
-              if (t.status !== 'pending') return false
-              return t.dependsOn.some(depId => {
-                const dep = m.tasks.find(d => d.id === depId)
-                return dep?.status === 'failed'
-              })
-            })
-            if (allDone) {
-              callbacksRef.current.addLog(`[Mission] Completed: ${m.name}`, 'info')
-              updateMission(prev => ({ ...prev, status: 'completed', updatedAt: Date.now() }))
-              callbacksRef.current.onComplete(missionRef.current!)
-              break
-            } else if (hasBlocked) {
-              pausedRef.current = true
-              updateMission(prev => ({ ...prev, status: 'paused', updatedAt: Date.now() }))
-              callbacksRef.current.onPaused(missionRef.current!)
-              break
-            } else {
-              await sleep(2000)
-              continue
-            }
-          }
-          const success = await executeTask(task)
-          if (abortRef.current) break
-          if (success) {
-            updateMission(m => ({
-              ...m,
-              completedTaskIds: [...m.completedTaskIds, task.id],
-              currentTaskIndex: m.tasks.findIndex(t => t.status === 'pending'),
-              updatedAt: Date.now(),
-            }))
-          } else {
-            pausedRef.current = true
-            updateMission(m => ({ ...m, status: 'paused', updatedAt: Date.now() }))
-            callbacksRef.current.onPaused(missionRef.current!)
-            break
-          }
-          await sleep(1000)
-        }
-      } finally {
-        runningRef.current = false
-      }
+      const completedCount = mission.tasks.filter(t => t.status === 'completed' || t.status === 'skipped').length
+      const pendingCount = mission.tasks.filter(t => t.status === 'pending').length
+      callbacksRef.current.addLog(
+        `[Mission] Resuming "${mission.name}" — ${completedCount} done, ${pendingCount} remaining`,
+        'info'
+      )
+
+      await runMissionLoop()
       return
     }
 
     pausedRef.current = false
     updateMission(m => ({ ...m, status: 'active', updatedAt: Date.now() }))
     callbacksRef.current.addLog(`[Mission] Resumed`, 'info')
-  }, [updateMission, getNextTask, executeTask])
+  }, [updateMission, runMissionLoop])
 
   const stopMission = useCallback(() => {
     abortRef.current = true
