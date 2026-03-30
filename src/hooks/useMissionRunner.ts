@@ -256,25 +256,22 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           'info'
         )
 
-        if (conditionMet && config?.thenTaskId) {
-          if (config.elseTaskId) updateTask(config.elseTaskId, { status: 'skipped' })
-        } else if (!conditionMet && config?.elseTaskId) {
-          if (config.thenTaskId) updateTask(config.thenTaskId, { status: 'skipped' })
-        } else if (!conditionMet) {
-          callbacksRef.current.addLog(`[Mission] Condition not met and no else-branch — skipping`, 'info')
-          updateTask(task.id, { status: 'skipped' })
-          return true
+        if (conditionMet) {
+          callbacksRef.current.addLog(`[Mission] Condition met — routing to then-branch`, 'info')
+          if (config?.elseTaskId) {
+            updateTask(config.elseTaskId, { status: 'skipped' })
+          }
+        } else {
+          callbacksRef.current.addLog(`[Mission] Condition not met — routing to else-branch`, 'info')
+          if (config?.thenTaskId) {
+            updateTask(config.thenTaskId, { status: 'skipped' })
+          }
+          if (!config?.elseTaskId) {
+            callbacksRef.current.addLog(`[Mission] No else-branch defined — conditional complete`, 'info')
+          }
         }
 
-        if (isAborted()) return false
-        const prompt = buildTaskPrompt(task)
-        await callbacksRef.current.sendChat(prompt)
-        await waitForExecution()
-        if (isAborted()) return false
-
-        const condOutput = callbacksRef.current.getLastAIResponse()
-        captureTaskOutput(task.id, condOutput)
-
+        captureTaskOutput(task.id, conditionMet ? 'condition_met' : 'condition_not_met')
         updateTask(task.id, { status: 'completed' })
         return true
       }
@@ -511,7 +508,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
   }
 }
 
-function buildTaskPrompt(task: MissionTask, loopItem?: string, loopIdx?: number, loopTotal?: number, missionKB?: string): string {
+function buildTaskPrompt(task: MissionTask, loopItem?: string, loopIdx?: number, loopTotal?: number): string {
   let prompt = task.description
 
   if (task.targetUrl) {
