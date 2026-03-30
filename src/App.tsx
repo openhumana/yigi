@@ -411,8 +411,8 @@ const App = () => {
   const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
 
-  const [autoPilot, setAutoPilot] = useState(true)
-  const autoPilotRef = useRef(true)
+  const [autoPilot, setAutoPilot] = useState(false)
+  const autoPilotRef = useRef(false)
   const [escalation, setEscalation] = useState<{ message: string; taskId?: string } | null>(null)
 
   const [sidePanel, setSidePanel] = useState<'chat' | 'missions' | 'skills' | 'activity'>('chat')
