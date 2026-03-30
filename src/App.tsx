@@ -104,6 +104,29 @@ async function mockAIResponse(
     if (typeable)  tasks.push({ action: 'dom_type',  description: `Type into ${typeable.placeholder || typeable.selector}`, payload: { selector: typeable.selector, value: userInput } })
   }
 
+  // Guarantee at least 2 tasks — pad with first unused clickable/typeable elements
+  if (tasks.length < 2) {
+    const usedSelectors = new Set(tasks.map((t: any) => t.payload?.selector))
+    const clickable = elements.find(e => (e.tag === 'button' || e.tag === 'a') && !usedSelectors.has(e.selector))
+    const typeable  = elements.find(e => (e.tag === 'input'  || e.tag === 'textarea') && !usedSelectors.has(e.selector))
+    if (tasks.length < 1 && clickable) {
+      tasks.push({ action: 'dom_click', description: `Click "${clickable.text || clickable.selector}"`, payload: { selector: clickable.selector } })
+      usedSelectors.add(clickable.selector)
+    }
+    if (tasks.length < 2) {
+      const filler = typeable ?? elements.find(e => !usedSelectors.has(e.selector))
+      if (filler) tasks.push({
+        action: filler.tag === 'input' || filler.tag === 'textarea' ? 'dom_type' : 'dom_click',
+        description: filler.tag === 'input' || filler.tag === 'textarea'
+          ? `Type into ${filler.placeholder || filler.selector}`
+          : `Click "${filler.text || filler.selector}"`,
+        payload: filler.tag === 'input' || filler.tag === 'textarea'
+          ? { selector: filler.selector, value: userInput }
+          : { selector: filler.selector },
+      })
+    }
+  }
+
   const workflowLabel: Record<string, string> = {
     reddit_post:  'Reddit Poster',
     reddit_reply: 'Reddit Replier',
