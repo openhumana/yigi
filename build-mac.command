@@ -36,6 +36,12 @@ npm install --silent 2>&1 | tail -3
 echo "✅  Packages ready"
 echo ""
 
+# ── Clean stale build artifacts ────────────────────────────
+echo "🧹  Cleaning old build cache..."
+rm -rf dist dist-electron build node_modules/.cache
+echo "✅  Clean done"
+echo ""
+
 # ── Build ──────────────────────────────────────────────────
 echo "🔨  Building Yogi Browser..."
 echo "    (Takes 3-5 minutes — please wait)"
