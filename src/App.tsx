@@ -192,7 +192,7 @@ async function mockAIResponse(
     const typeable = searchEl || elements.find(e => e.tag === 'input' || e.tag === 'textarea')
     if (typeable) {
       tasks.push({ action: 'dom_type', description: 'Type search query into the search bar', payload: { selector: typeable.selector, value: userInput } })
-      tasks.push({ action: 'dom_press_enter', description: 'Press Enter to run the search', payload: { selector: typeable.selector } })
+      tasks.push({ action: 'dom_press_enter', description: 'Press Enter to run the search', payload: { selector: typeable.selector, value: userInput } })
     }
   } else {
     // Generic fallback — pick first clickable, then first typeable
@@ -1102,6 +1102,37 @@ ${currentInput}`
             iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: currentSelector, value: task.payload?.value ?? '' }, '*')
           } else if (task.action === 'dom_press_enter') {
             iframe.contentWindow!.postMessage({ type: 'yogi-press-enter', selector: currentSelector }, '*')
+            // Direct-navigation fallback: if pressing Enter on a search field,
+            // build the search URL ourselves and navigate through the proxy
+            const searchValue = task.payload?.value ?? ''
+            if (searchValue) {
+              const currentRawUrl = inputUrl.replace(/^https?:\/\//, '').split('?')[0]
+              const isGoogleSearch = currentRawUrl.includes('google.com')
+              const isBingSearch = currentRawUrl.includes('bing.com')
+              const isDDGSearch = currentRawUrl.includes('duckduckgo.com')
+              if (isGoogleSearch) {
+                setTimeout(() => {
+                  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchValue)}`
+                  setUrl(proxyUrl(searchUrl))
+                  setInputUrl(searchUrl)
+                  if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
+                }, 1200)
+              } else if (isBingSearch) {
+                setTimeout(() => {
+                  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchValue)}`
+                  setUrl(proxyUrl(searchUrl))
+                  setInputUrl(searchUrl)
+                  if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
+                }, 1200)
+              } else if (isDDGSearch) {
+                setTimeout(() => {
+                  const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(searchValue)}`
+                  setUrl(proxyUrl(searchUrl))
+                  setInputUrl(searchUrl)
+                  if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
+                }, 1200)
+              }
+            }
           }
 
           await waitForWebStability()
