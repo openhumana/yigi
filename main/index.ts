@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { app, BrowserWindow, shell, ipcMain, NativeImage, Notification, Menu, session } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, NativeImage, Notification, session } from 'electron'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import fs from 'fs'
@@ -19,13 +19,10 @@ if (process.platform === 'darwin') {
 }
 
 // ── Path resolution ────────────────────────────────────────────────────────
-// Use app.getAppPath() for reliable resolution inside .asar packages
 process.env.DIST_ELECTRON = join(__dirname, '../')
-process.env.DIST = app.isPackaged
-  ? join(app.getAppPath(), 'dist')
-  : join(__dirname, '../../dist')
+process.env.DIST = join(process.env.DIST_ELECTRON, '../dist')
 process.env.PUBLIC = process.env.VITE_DEV_SERVER_URL
-  ? join(__dirname, '../../public')
+  ? join(process.env.DIST_ELECTRON, '../public')
   : process.env.DIST
 
 if (release().startsWith('6.1')) app.disableHardwareAcceleration()
@@ -38,9 +35,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win: BrowserWindow | null = null
-const preloadPath = app.isPackaged
-  ? join(app.getAppPath(), 'dist-electron', 'preload', 'index.js')
-  : join(__dirname, '../preload/index.js')
+const preloadPath = join(__dirname, '../preload/index.js')
 
 const url = process.env.VITE_DEV_SERVER_URL
 const indexHtml = join(process.env.DIST, 'index.html')
@@ -63,62 +58,6 @@ async function createWindow() {
       spellcheck: false,
     },
   })
-
-  // ── Mac: remove default menu bar ────────────────────────────────────────
-  if (process.platform === 'darwin') {
-    Menu.setApplicationMenu(Menu.buildFromTemplate([
-      {
-        label: app.name,
-        submenu: [
-          { role: 'about' },
-          { type: 'separator' },
-          { role: 'services' },
-          { type: 'separator' },
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit' },
-        ],
-      },
-      {
-        label: 'Edit',
-        submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
-          { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
-        ],
-      },
-      {
-        label: 'View',
-        submenu: [
-          { role: 'reload' },
-          { role: 'forceReload' },
-          { type: 'separator' },
-          { role: 'resetZoom' },
-          { role: 'zoomIn' },
-          { role: 'zoomOut' },
-          { type: 'separator' },
-          { role: 'togglefullscreen' },
-        ],
-      },
-      {
-        label: 'Window',
-        submenu: [
-          { role: 'minimize' },
-          { role: 'zoom' },
-          { type: 'separator' },
-          { role: 'front' },
-        ],
-      },
-    ]))
-  } else {
-    Menu.setApplicationMenu(null)
-  }
 
   // ── Mac: grant all permissions for webview automation ───────────────────
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
