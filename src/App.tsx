@@ -358,13 +358,10 @@ const PlanCard = ({ planId, tasks, onApprove, autoPilotOn }: {
               )}
             </div>
             <div className="plan-task-ctrl">
-              {(t.status == null || t.status === 'pending') && !autoPilotOn && (
+              {(t.status == null || t.status === 'pending') && (
                 <button type="button" className="approve-btn" onClick={() => onApprove(planId, t.id)}>
                   <ShieldCheck size={12} style={{ marginRight: 4 }} />Approve
                 </button>
-              )}
-              {(t.status == null || t.status === 'pending') && autoPilotOn && (
-                <span className="plan-badge auto">AUTO</span>
               )}
               {t.status === 'running' && (
                 <span className="plan-badge running"><RotateCw size={11} className="spin" style={{ marginRight: 3 }} />Running</span>
@@ -401,6 +398,8 @@ const App = () => {
   const [messages, setMessages] = useState<any[]>([
     { id: 'init', type: 'message', role: 'agent', message: '🚀 Yogi is online. Ready to automate Open Humana sales. How can I help?' }
   ])
+  const messagesRef = useRef<any[]>([])
+  useEffect(() => { messagesRef.current = messages }, [messages])
   const [input, setInput] = useState('')
   const [tasks, setTasks] = useState<any[]>([])
   const [workflow, setWorkflow] = useState('reddit_post')
@@ -1613,12 +1612,8 @@ ${currentInput}`
 
   // ── Plan task approval (for inline PlanCard) ────────────
   const approvePlanTask = useCallback(async (planId: string, taskId: string) => {
-    let task: any = null
-    setMessages(prev => {
-      const msg = prev.find(m => m.id === planId)
-      task = msg?.tasks?.find((t: any) => t.id === taskId)
-      return prev
-    })
+    const planMsg = messagesRef.current.find(m => m.id === planId)
+    const task = planMsg?.tasks?.find((t: any) => t.id === taskId)
     if (!task) return
 
     updatePlanTask(planId, taskId, 'running')
