@@ -365,6 +365,27 @@ body {
   transform: scale(1.1);
 }
 
+/* 🔔 NOTIFICATION */
+.notification {
+  margin: 0 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.notification.info {
+  background: rgba(82, 134, 255, 0.12);
+  border: 1px solid rgba(82, 134, 255, 0.3);
+  color: #d1e0ff;
+}
+
+.notification.alert {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fecaca;
+}
+
 /* 🔔 NOTIFICATION CARD */
 .notification-card {
   position: fixed;

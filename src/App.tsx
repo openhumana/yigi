@@ -1,18 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X } from 'lucide-react'
 
-// ──────────────────────────────────────────────
-// Component: Chat Bubbles
-// ──────────────────────────────────────────────
+const isElectron = !!(window as any).yogi
+
 const ChatBubble = ({ message, role }: { message: string, role: 'agent' | 'user' }) => (
   <div className={`chat-bubble ${role}`}>
     {message}
   </div>
 )
 
-// ──────────────────────────────────────────────
-// Main App Component
-// ──────────────────────────────────────────────
 const App = () => {
   const [messages, setMessages] = useState<any[]>([
     { role: 'agent', message: '🚀 Yogi is online. Ready to automate Open Humana sales. How can I help?' }
@@ -25,18 +21,15 @@ const App = () => {
   const [isAutomating, setIsAutomating] = useState(false)
   const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null)
 
-  // Resizable Sidebar State
   const [sidebarWidth, setSidebarWidth] = useState(parseInt(localStorage.getItem('sidebarWidth') || '400'))
   const [isResizing, setIsResizing] = useState(false)
 
-  // Browser State
   const [url, setUrl] = useState('https://www.reddit.com/r/sales/')
   const [inputUrl, setInputUrl] = useState('https://www.reddit.com/r/sales/')
 
   const webviewRef = useRef<any>(null)
   const sidebarRef = useRef<any>(null)
 
-  // Resizing Logic
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setIsResizing(true)
@@ -70,12 +63,14 @@ const App = () => {
     }
   }, [isResizing, resize, stopResizing])
 
-  // Settings Loading
   useEffect(() => {
     const loadSettings = async () => {
-      if ((window as any).yogi) {
+      if (isElectron) {
         const res = await (window as any).yogi.getSettings()
         setSettings(res)
+      } else {
+        const saved = localStorage.getItem('yogi_settings')
+        if (saved) setSettings(JSON.parse(saved))
       }
     }
     loadSettings()
@@ -83,48 +78,13 @@ const App = () => {
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault()
-    await (window as any).yogi.saveSettings(settings)
+    if (isElectron) {
+      await (window as any).yogi.saveSettings(settings)
+    } else {
+      localStorage.setItem('yogi_settings', JSON.stringify(settings))
+    }
     setShowSettings(false)
   }
-
-  useEffect(() => {
-    const webview = webviewRef.current
-    if (!webview) return
-
-    const handleNavigate = (event: any) => {
-      setUrl(event.url)
-      setInputUrl(event.url)
-    }
-
-    const handleFailLoad = (e: any) => {
-      setNotification({
-        message: `❌ Browser Error: ${e.errorDescription}`,
-        type: 'alert'
-      })
-    }
-
-    webview.addEventListener('did-navigate', handleNavigate)
-    webview.addEventListener('did-navigate-in-page', handleNavigate)
-    webview.addEventListener('did-fail-load', handleFailLoad)
-
-    return () => {
-      webview.removeEventListener('did-navigate', handleNavigate)
-      webview.removeEventListener('did-navigate-in-page', handleNavigate)
-      webview.removeEventListener('did-fail-load', handleFailLoad)
-    }
-  }, [])
-
-  const handleUrlSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    let targetUrl = inputUrl
-    if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`
-    setInputUrl(targetUrl)
-    webviewRef.current?.loadURL(targetUrl)
-  }
-
-  const goBack = () => webviewRef.current?.canGoBack() && webviewRef.current?.goBack()
-  const goForward = () => webviewRef.current?.canGoForward() && webviewRef.current?.goForward()
-  const reload = () => webviewRef.current?.reload()
 
   const [isThinking, setIsThinking] = useState(false)
   const [thinkingLog, setThinkingLog] = useState('Yogi is starting...')
@@ -133,7 +93,7 @@ const App = () => {
   const logsEndRef = useRef<any>(null)
 
   useEffect(() => {
-    if ((window as any).yogi) {
+    if (isElectron && (window as any).yogi) {
       (window as any).yogi.onAgentLog((msg: string) => {
         setThinkingLog(msg)
         setThinkingLogs(prev => {
@@ -149,9 +109,6 @@ const App = () => {
     if (isDrawerOpen) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [thinkingLogs, isDrawerOpen])
 
-  // --- CONTINUED IN PART 2 ---// ──────────────────────────────────────────────
-  // "EYES" UPGRADE: handleSend with Page Context
-  // ──────────────────────────────────────────────
   const handleSend = async () => {
     if (!input) return
     const userMsg = { role: 'user', message: input }
@@ -163,33 +120,37 @@ const App = () => {
     setThinkingLog('Scanning current page for elements...')
 
     try {
-      // 1. Get the "Eyes" (Page Map)
-      let pageMap = {}
-      try {
-        pageMap = await (window as any).yogi.getBrowserState()
-      } catch (e) {
-        console.warn("Could not retrieve browser state context", e)
-      }
+      if (isElectron) {
+        let pageMap = {}
+        try {
+          pageMap = await (window as any).yogi.getBrowserState()
+        } catch (e) {
+          console.warn("Could not retrieve browser state context", e)
+        }
 
-      // 2. Inject context into the prompt
-      const contextPrompt = `
-      BROWSER CONTEXT (Current Page Elements):
-      ${JSON.stringify(pageMap)}
+        const contextPrompt = `
+        BROWSER CONTEXT (Current Page Elements):
+        ${JSON.stringify(pageMap)}
 
-      USER REQUEST:
-      ${currentInput}
-      `
+        USER REQUEST:
+        ${currentInput}
+        `
 
-      // 3. Send to Brain
-      const res = await (window as any).yogi.sendChatMessage(contextPrompt, 'high', workflow, settings)
+        const res = await (window as any).yogi.sendChatMessage(contextPrompt, 'high', workflow, settings)
 
-      setMessages(prev => [...prev, { role: 'agent', message: res.text }])
+        setMessages(prev => [...prev, { role: 'agent', message: res.text }])
 
-      if (res.tasks && Array.isArray(res.tasks)) {
-        setTasks(res.tasks.map((t: any, i: number) => ({
-          ...t,
-          id: `task-${Date.now()}-${i}`
-        })))
+        if (res.tasks && Array.isArray(res.tasks)) {
+          setTasks(res.tasks.map((t: any, i: number) => ({
+            ...t,
+            id: `task-${Date.now()}-${i}`
+          })))
+        }
+      } else {
+        setMessages(prev => [...prev, {
+          role: 'agent',
+          message: `⚠️ Desktop mode required: Yogi's AI automation runs as a desktop app. Configure your API keys in Settings and run the Electron app to enable full automation.`
+        }])
       }
     } catch (e: any) {
       setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Agent Error: ${e.message}` }])
@@ -204,10 +165,14 @@ const App = () => {
     setIsThinking(true)
     setThinkingLog(`Parsing PDF Knowledge...`)
     try {
-      const res = await (window as any).yogi.parsePdf(file.path)
-      if (res.status === 'success') {
-        setSettings({ ...settings, MASTER_KB: (settings.MASTER_KB || '') + '\n\n' + res.text })
-        setNotification({ message: `Successfully synced PDF context!`, type: 'info' })
+      if (isElectron) {
+        const res = await (window as any).yogi.parsePdf(file.path)
+        if (res.status === 'success') {
+          setSettings({ ...settings, MASTER_KB: (settings.MASTER_KB || '') + '\n\n' + res.text })
+          setNotification({ message: `Successfully synced PDF context!`, type: 'info' })
+        }
+      } else {
+        setNotification({ message: `PDF parsing requires the desktop app.`, type: 'info' })
       }
     } catch (err: any) {
       setNotification({ message: `Error: ${err.message}`, type: 'alert' })
@@ -217,29 +182,72 @@ const App = () => {
   }
 
   const approveTask = async (id: string) => {
-    const task = tasks.find(t => t.id === id);
-    if (!task) return;
+    const task = tasks.find(t => t.id === id)
+    if (!task) return
 
     try {
+      if (!isElectron) {
+        setTasks(prev => prev.filter(t => t.id !== id))
+        return
+      }
       if (task.action === 'dom_click' || task.action === 'dom_type') {
         const result = await (window as any).yogi.domAction(
           task.payload.selector,
           task.action,
           task.payload.value || ""
-        );
-        if (result.status === 'error') throw new Error(result.message);
+        )
+        if (result.status === 'error') throw new Error(result.message)
       } else if (task.action === 'execute') {
-        await (window as any).yogi.executeTerminal(task.payload.command);
+        await (window as any).yogi.executeTerminal(task.payload.command)
       } else if (task.action === 'navigate') {
-        webviewRef.current?.loadURL(task.payload.url);
+        setUrl(task.payload.url)
+        setInputUrl(task.payload.url)
       } else if (['type', 'click', 'scroll'].includes(task.action)) {
-        await (window as any).yogi.humanInteraction(task.action, task.payload);
+        await (window as any).yogi.humanInteraction(task.action, task.payload)
       }
-      setTasks(prev => prev.filter(t => t.id !== id));
+      setTasks(prev => prev.filter(t => t.id !== id))
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Task Failed: ${e.message}` }]);
+      setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Task Failed: ${e.message}` }])
     }
-  };
+  }
+
+  const handleUrlSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    let targetUrl = inputUrl
+    if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`
+    setUrl(targetUrl)
+    setInputUrl(targetUrl)
+  }
+
+  const goBack = () => {
+    if (webviewRef.current) {
+      if (isElectron) {
+        webviewRef.current.canGoBack() && webviewRef.current.goBack()
+      } else {
+        webviewRef.current.contentWindow?.history.back()
+      }
+    }
+  }
+
+  const goForward = () => {
+    if (webviewRef.current) {
+      if (isElectron) {
+        webviewRef.current.canGoForward() && webviewRef.current.goForward()
+      } else {
+        webviewRef.current.contentWindow?.history.forward()
+      }
+    }
+  }
+
+  const reload = () => {
+    if (webviewRef.current) {
+      if (isElectron) {
+        webviewRef.current.reload()
+      } else {
+        webviewRef.current.contentWindow?.location.reload()
+      }
+    }
+  }
 
   return (
     <div className="app-container" style={{ '--sidebar-width': `${sidebarWidth}px` } as any}>
@@ -260,6 +268,12 @@ const App = () => {
             <option value="linkedin">B: LinkedIn Outreach</option>
           </select>
         </div>
+
+        {notification && (
+          <div className={`notification ${notification.type}`} onClick={() => setNotification(null)}>
+            {notification.message}
+          </div>
+        )}
 
         <div className="chat-feed">
           {messages.map((m, i) => <ChatBubble key={i} message={m.message} role={m.role} />)}
@@ -319,13 +333,12 @@ const App = () => {
           </form>
         </div>
         <div className="browser-viewport">
-          <webview
+          <iframe
             ref={webviewRef}
             src={url}
-            webpreferences="nodeIntegration=no, contextIsolation=yes"
-            allowpopups={true as any}
-            style={{ width: '100%', height: '100%' }}
-            useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            style={{ width: '100%', height: '100%', border: 'none' }}
+            title="Yogi Browser Viewport"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation"
           />
         </div>
       </div>
