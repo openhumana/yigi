@@ -13,7 +13,8 @@ import { useMissionRunner, SESSION_ID } from './hooks/useMissionRunner'
 const isElectron = !!(window as any).yogi
 
 // Height (px) reserved for the agent action overlay banner in Electron mode
-const OVERLAY_BANNER_H = 44
+// Reduced to 0 — thinking is now shown inline in chat (ThinkingBlock)
+const OVERLAY_BANNER_H = 0
 
 // ──────────────────────────────────────────────
 // MOCK MODE — Web preview simulation layer
@@ -1094,11 +1095,6 @@ const App = () => {
       }])
     }
 
-    // Auto-enable Auto-Pilot so commands execute without manual approval
-    if (!autoPilotRef.current) {
-      setAutoPilot(true)
-      autoPilotRef.current = true
-    }
     setThinkingLog('Scanning page for interactive elements...')
 
     try {
@@ -1733,6 +1729,12 @@ ${currentInput}`
             status: 'retry',
             reason,
           })
+          setMessages(prev => [...prev, {
+            id: `retry-${Date.now()}`,
+            type: 'error',
+            what: `"${task.description}" failed (attempt ${attempt}/${MAX_RETRIES})`,
+            retry: reason,
+          }])
         })
       } catch (e: any) {
         result = { status: 'error', reason: e.message }
@@ -2201,12 +2203,11 @@ ${currentInput}`
               }}
             />
           )}
-          <div className={`agent-action-overlay${isThinking ? ' visible' : ''}`}>
-            <div className="agent-action-banner">
-              <span className="agent-action-dot" />
-              <span className="agent-action-text">{thinkingLog}</span>
+          {isThinking && (
+            <div className="agent-active-dot-overlay">
+              <span className="agent-active-dot" title={thinkingLog} />
             </div>
-          </div>
+          )}
         </div>
       </div>
 

@@ -2639,3 +2639,29 @@ body {
   margin-top: 4px;
   font-style: italic;
 }
+
+/* ══════════════════════════════════════════
+   AGENT ACTIVE DOT OVERLAY (replaces full banner)
+══════════════════════════════════════════ */
+.agent-active-dot-overlay {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.agent-active-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #5286ff;
+  box-shadow: 0 0 8px rgba(82, 134, 255, 0.7);
+  animation: active-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes active-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.7); }
+}
