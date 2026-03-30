@@ -387,10 +387,13 @@ const App = () => {
   }, [])
 
   useEffect(() => {
+    const activeMissionType = activeMission?.name?.toLowerCase() || ''
+
     const activeSkills = skills
       .filter(s => s.enabled)
       .filter(s => s.activationTriggers.some(t => {
         if (t.type === 'url_pattern') return inputUrl.toLowerCase().includes(t.value.toLowerCase())
+        if (t.type === 'mission_type' && activeMissionType) return activeMissionType.includes(t.value.toLowerCase())
         return false
       }))
       .sort((a, b) => b.priority - a.priority)
@@ -400,7 +403,7 @@ const App = () => {
     if (isElectron) {
       (window as any).yogi.injectSkills(content)
     }
-  }, [inputUrl, skills])
+  }, [inputUrl, skills, activeMission])
 
   const handleSaveMission = useCallback((mission: Mission) => {
     setMissions(prev => {
@@ -488,12 +491,55 @@ const App = () => {
       }
     },
     getBrowserUrl: () => inputUrl,
+    getBrowserElements: () => proxyElementsRef.current,
+    navigateTo: (targetUrl: string) => {
+      if (isElectron && webviewRef.current) {
+        webviewRef.current.loadURL(targetUrl)
+      } else {
+        const next = proxyUrl(targetUrl)
+        setUrl(next)
+        setInputUrl(targetUrl)
+        if (webviewRef.current) webviewRef.current.src = next
+      }
+      setInputUrl(targetUrl)
+    },
     saveMission: (m: Mission) => handleSaveMission(m),
     onComplete: (m: Mission) => {
       setActiveMission(null)
       setNotification({ message: `Mission "${m.name}" completed!`, type: 'info' })
     },
+    onPaused: (m: Mission) => {
+      setActiveMission(m)
+      const completedCount = m.tasks.filter(t => t.status === 'completed' || t.status === 'skipped').length
+      setNotification({
+        message: `Mission "${m.name}" paused at task ${completedCount}/${m.tasks.length}`,
+        type: 'alert'
+      })
+    },
   })
+
+  const [resumeBanner, setResumeBanner] = useState<Mission | null>(null)
+
+  useEffect(() => {
+    const interrupted = missions.find(m =>
+      m.status === 'active' || m.status === 'paused'
+    )
+    if (interrupted && !activeMission && !missionRunner.isRunning()) {
+      setResumeBanner(interrupted)
+    }
+  }, [missions])
+
+  const handleResumeMission = useCallback((mission: Mission) => {
+    setResumeBanner(null)
+    setActiveMission(mission)
+    setSidePanel('chat')
+    missionRunner.resumeMission(mission)
+  }, [missionRunner])
+
+  const handleDismissResume = useCallback((mission: Mission) => {
+    setResumeBanner(null)
+    handleSaveMission({ ...mission, status: 'draft', updatedAt: Date.now() })
+  }, [handleSaveMission])
 
   const handleRunMission = useCallback((mission: Mission) => {
     setActiveMission(mission)
@@ -1393,6 +1439,25 @@ ${currentInput}`
             <button className="escalation-resume" onClick={resumeAfterEscalation}>
               <Play size={14} /> Resume
             </button>
+          </div>
+        )}
+
+        {resumeBanner && (
+          <div className="mission-resume-banner">
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: '12px' }}>Resume interrupted mission?</div>
+              <div style={{ fontSize: '11px', opacity: 0.8, marginTop: 2 }}>
+                "{resumeBanner.name}" — {resumeBanner.tasks.filter(t => t.status === 'completed' || t.status === 'skipped').length}/{resumeBanner.tasks.length} tasks done
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button className="mission-banner-btn" onClick={() => handleResumeMission(resumeBanner)}>
+                <Play size={11} /> Resume
+              </button>
+              <button className="mission-banner-btn stop" onClick={() => handleDismissResume(resumeBanner)}>
+                <X size={11} /> Dismiss
+              </button>
+            </div>
           </div>
         )}
 

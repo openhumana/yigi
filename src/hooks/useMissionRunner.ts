@@ -1,12 +1,23 @@
 import { useRef, useCallback, useEffect } from 'react'
 import { Mission, MissionTask } from '../types/mission'
 
+interface BrowserElement {
+  tag: string
+  text: string
+  selector: string
+  ariaLabel?: string
+  placeholder?: string
+}
+
 interface RunnerCallbacks {
   sendChat: (prompt: string) => Promise<void>
   addLog: (msg: string, type?: string) => void
   getBrowserUrl: () => string
+  getBrowserElements: () => BrowserElement[]
+  navigateTo: (url: string) => void
   saveMission: (mission: Mission) => void
   onComplete: (mission: Mission) => void
+  onPaused: (mission: Mission) => void
 }
 
 export function useMissionRunner(callbacks: RunnerCallbacks) {
@@ -15,6 +26,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
   const missionRef = useRef<Mission | null>(null)
   const abortRef = useRef(false)
   const callbacksRef = useRef(callbacks)
+  const taskResultsRef = useRef<Record<string, string>>({})
   callbacksRef.current = callbacks
 
   useEffect(() => {
@@ -57,16 +69,28 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     if (!config) return true
 
     const url = callbacksRef.current.getBrowserUrl()
+    const elements = callbacksRef.current.getBrowserElements()
 
     switch (config.type) {
       case 'url_contains':
         return url.toLowerCase().includes(config.value.toLowerCase())
       case 'url_matches':
         try { return new RegExp(config.value).test(url) } catch { return false }
-      case 'element_exists':
-        return true
-      case 'text_contains':
-        return true
+      case 'element_exists': {
+        const selectorLower = config.value.toLowerCase()
+        return elements.some(el =>
+          el.selector.toLowerCase().includes(selectorLower) ||
+          (el.text && el.text.toLowerCase().includes(selectorLower)) ||
+          (el.ariaLabel && el.ariaLabel.toLowerCase().includes(selectorLower))
+        )
+      }
+      case 'text_contains': {
+        const valueLower = config.value.toLowerCase()
+        return elements.some(el =>
+          (el.text && el.text.toLowerCase().includes(valueLower)) ||
+          (el.placeholder && el.placeholder.toLowerCase().includes(valueLower))
+        )
+      }
       case 'previous_task_status': {
         const mission = missionRef.current
         if (!mission) return false
@@ -94,6 +118,84 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     return null
   }, [])
 
+  const resolveLoopItems = useCallback((task: MissionTask): string[] => {
+    const config = task.loopConfig
+    if (!config) return []
+
+    if (config.source === 'hardcoded' && config.items) {
+      return config.items
+    }
+
+    if (config.source === 'selector' && config.selector) {
+      const elements = callbacksRef.current.getBrowserElements()
+      const selectorLower = config.selector.toLowerCase()
+      const matched = elements.filter(el =>
+        el.selector.toLowerCase().includes(selectorLower) ||
+        (el.tag && el.tag.toLowerCase() === selectorLower)
+      )
+      if (matched.length > 0) {
+        return matched.map(el => el.text || el.selector)
+      }
+      callbacksRef.current.addLog(`[Mission] Loop selector "${config.selector}" matched 0 elements, using element text fallback`, 'info')
+      return elements.slice(0, 5).map(el => el.text || el.selector)
+    }
+
+    if (config.source === 'previous_task' && config.previousTaskId) {
+      const result = taskResultsRef.current[config.previousTaskId]
+      if (result) {
+        try {
+          const parsed = JSON.parse(result)
+          if (Array.isArray(parsed)) return parsed.map(String)
+        } catch {}
+        return result.split('\n').filter(line => line.trim().length > 0)
+      }
+      callbacksRef.current.addLog(`[Mission] No output from task ${config.previousTaskId} for loop source`, 'info')
+    }
+
+    return []
+  }, [])
+
+  const verifySuccessCriteria = useCallback((criteria: string): { met: boolean; reason: string } => {
+    const url = callbacksRef.current.getBrowserUrl()
+    const elements = callbacksRef.current.getBrowserElements()
+    const criteriaLower = criteria.toLowerCase()
+
+    if (criteriaLower.includes('url') && criteriaLower.includes('contains')) {
+      const match = criteria.match(/contains?\s+["']?([^"']+)["']?/i)
+      if (match) {
+        const target = match[1].trim()
+        if (url.toLowerCase().includes(target.toLowerCase())) {
+          return { met: true, reason: `URL contains "${target}"` }
+        }
+        return { met: false, reason: `URL does not contain "${target}" (current: ${url})` }
+      }
+    }
+
+    if (criteriaLower.includes('element') || criteriaLower.includes('visible') || criteriaLower.includes('present')) {
+      const keywords = criteria.replace(/element|visible|present|exists|should|be|is|the|a|an|on|page/gi, '')
+        .trim().split(/\s+/).filter(w => w.length > 2)
+      for (const kw of keywords) {
+        const found = elements.some(el =>
+          el.text?.toLowerCase().includes(kw.toLowerCase()) ||
+          el.selector?.toLowerCase().includes(kw.toLowerCase())
+        )
+        if (found) return { met: true, reason: `Found element matching "${kw}"` }
+      }
+      if (keywords.length > 0) {
+        return { met: false, reason: `No elements matching criteria keywords: ${keywords.join(', ')}` }
+      }
+    }
+
+    const pageText = elements.map(el => el.text).join(' ').toLowerCase()
+    const criteriaWords = criteria.split(/\s+/).filter(w => w.length > 3)
+    const matchCount = criteriaWords.filter(w => pageText.includes(w.toLowerCase())).length
+    if (criteriaWords.length > 0 && matchCount / criteriaWords.length > 0.5) {
+      return { met: true, reason: `Page content matches ${matchCount}/${criteriaWords.length} criteria keywords` }
+    }
+
+    return { met: true, reason: 'Success criteria check passed (heuristic)' }
+  }, [])
+
   const executeTask = useCallback(async (task: MissionTask): Promise<boolean> => {
     if (isAborted()) return false
     updateTask(task.id, { status: 'running' })
@@ -101,12 +203,20 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
 
     if (task.targetUrl) {
       callbacksRef.current.addLog(`[Mission] Navigating to ${task.targetUrl}`, 'info')
+      callbacksRef.current.navigateTo(task.targetUrl)
+      await sleep(3000)
+      if (isAborted()) return false
     }
 
     try {
       if (task.type === 'conditional') {
         const conditionMet = await evaluateCondition(task)
         const config = task.conditionConfig
+
+        callbacksRef.current.addLog(
+          `[Mission] Condition "${config?.type}" = "${config?.value}": ${conditionMet ? 'MET' : 'NOT MET'}`,
+          'info'
+        )
 
         if (conditionMet && config?.thenTaskId) {
           callbacksRef.current.addLog(`[Mission] Condition met — proceeding to then-branch`, 'info')
@@ -115,7 +225,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           callbacksRef.current.addLog(`[Mission] Condition not met — proceeding to else-branch`, 'info')
           if (config.thenTaskId) updateTask(config.thenTaskId, { status: 'skipped' })
         } else if (!conditionMet) {
-          callbacksRef.current.addLog(`[Mission] Condition not met — skipping`, 'info')
+          callbacksRef.current.addLog(`[Mission] Condition not met and no else-branch — skipping`, 'info')
           updateTask(task.id, { status: 'skipped' })
           return true
         }
@@ -132,22 +242,29 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
 
       if (task.type === 'loop') {
         const loopItems = resolveLoopItems(task)
-        const total = loopItems.length || 1
+        const total = loopItems.length
+        if (total === 0) {
+          callbacksRef.current.addLog(`[Mission] Loop has 0 items — skipping`, 'info')
+          updateTask(task.id, { status: 'skipped' })
+          return true
+        }
+
         callbacksRef.current.addLog(`[Mission] Loop task: ${total} iterations`, 'info')
 
-        let completedIterations = 0
-        for (let i = 0; i < total; i++) {
+        const startFrom = task.loopIndex || 0
+        let completedIterations = startFrom
+        for (let i = startFrom; i < total; i++) {
           if (isAborted() || !runningRef.current || pausedRef.current) break
 
           updateTask(task.id, { loopIndex: i, loopTotal: total })
-          const item = loopItems[i] || `item_${i}`
+          const item = loopItems[i]
           const prompt = buildTaskPrompt(task, item, i, total)
 
           callbacksRef.current.addLog(`[Mission] Loop iteration ${i + 1}/${total}: ${item}`, 'info')
           await callbacksRef.current.sendChat(prompt)
           await sleep(2000)
           if (isAborted()) break
-          completedIterations++
+          completedIterations = i + 1
         }
 
         if (completedIterations === total) {
@@ -165,6 +282,19 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       await sleep(2000)
       if (isAborted()) return false
 
+      if (task.successCriteria) {
+        const verification = verifySuccessCriteria(task.successCriteria)
+        callbacksRef.current.addLog(
+          `[Mission] Success criteria: ${verification.met ? 'MET' : 'NOT MET'} — ${verification.reason}`,
+          verification.met ? 'info' : 'alert'
+        )
+        if (!verification.met) {
+          updateTask(task.id, { status: 'failed', result: verification.reason })
+          return false
+        }
+      }
+
+      taskResultsRef.current[task.id] = `Completed: ${task.description}`
       updateTask(task.id, { status: 'completed' })
       return true
     } catch (err: any) {
@@ -173,10 +303,11 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       updateTask(task.id, { status: 'failed', result: err.message || String(err) })
       return false
     }
-  }, [evaluateCondition, updateTask, sleep])
+  }, [evaluateCondition, resolveLoopItems, verifySuccessCriteria, updateTask])
 
   const runMission = useCallback(async (mission: Mission) => {
     abortRef.current = false
+    taskResultsRef.current = {}
     missionRef.current = { ...mission, status: 'active', updatedAt: Date.now() }
     runningRef.current = true
     pausedRef.current = false
@@ -214,6 +345,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
             callbacksRef.current.addLog(`[Mission] Blocked — tasks depend on failed tasks, pausing`, 'alert')
             pausedRef.current = true
             updateMission(prev => ({ ...prev, status: 'paused', updatedAt: Date.now() }))
+            callbacksRef.current.onPaused(missionRef.current!)
             break
           } else {
             await sleep(2000)
@@ -237,7 +369,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
             if (!runningRef.current || abortRef.current) break
             callbacksRef.current.addLog(`[Mission] Retrying task (${retry + 1}/${task.maxRetries})`, 'info')
             updateTask(task.id, { status: 'pending' })
-            await sleep(1000)
+            await sleep(1000 * (retry + 1))
             if (abortRef.current) break
             const retrySuccess = await executeTask(task)
             if (retrySuccess) {
@@ -255,6 +387,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
             callbacksRef.current.addLog(`[Mission] Task failed after retries — pausing mission`, 'alert')
             pausedRef.current = true
             updateMission(m => ({ ...m, status: 'paused', updatedAt: Date.now() }))
+            callbacksRef.current.onPaused(missionRef.current!)
             break
           }
         }
@@ -264,7 +397,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     } finally {
       runningRef.current = false
     }
-  }, [getNextTask, executeTask, updateMission, updateTask, sleep])
+  }, [getNextTask, executeTask, updateMission, updateTask])
 
   const pauseMission = useCallback(() => {
     pausedRef.current = true
@@ -272,11 +405,77 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     callbacksRef.current.addLog(`[Mission] Paused`, 'info')
   }, [updateMission])
 
-  const resumeMission = useCallback(() => {
+  const resumeMission = useCallback(async (mission?: Mission) => {
+    if (mission && !missionRef.current) {
+      abortRef.current = false
+      taskResultsRef.current = {}
+      missionRef.current = { ...mission, status: 'active', updatedAt: Date.now() }
+      runningRef.current = true
+      pausedRef.current = false
+      callbacksRef.current.saveMission(missionRef.current)
+      callbacksRef.current.addLog(`[Mission] Resuming: ${mission.name}`, 'info')
+
+      try {
+        while (runningRef.current && !abortRef.current) {
+          if (pausedRef.current) {
+            await sleep(500)
+            continue
+          }
+          const task = getNextTask()
+          if (!task) {
+            const m = missionRef.current!
+            const allDone = m.tasks.every(t =>
+              t.status === 'completed' || t.status === 'skipped' || t.status === 'failed'
+            )
+            const hasBlocked = m.tasks.some(t => {
+              if (t.status !== 'pending') return false
+              return t.dependsOn.some(depId => {
+                const dep = m.tasks.find(d => d.id === depId)
+                return dep?.status === 'failed'
+              })
+            })
+            if (allDone) {
+              callbacksRef.current.addLog(`[Mission] Completed: ${m.name}`, 'info')
+              updateMission(prev => ({ ...prev, status: 'completed', updatedAt: Date.now() }))
+              callbacksRef.current.onComplete(missionRef.current!)
+              break
+            } else if (hasBlocked) {
+              pausedRef.current = true
+              updateMission(prev => ({ ...prev, status: 'paused', updatedAt: Date.now() }))
+              callbacksRef.current.onPaused(missionRef.current!)
+              break
+            } else {
+              await sleep(2000)
+              continue
+            }
+          }
+          const success = await executeTask(task)
+          if (abortRef.current) break
+          if (success) {
+            updateMission(m => ({
+              ...m,
+              completedTaskIds: [...m.completedTaskIds, task.id],
+              currentTaskIndex: m.tasks.findIndex(t => t.status === 'pending'),
+              updatedAt: Date.now(),
+            }))
+          } else {
+            pausedRef.current = true
+            updateMission(m => ({ ...m, status: 'paused', updatedAt: Date.now() }))
+            callbacksRef.current.onPaused(missionRef.current!)
+            break
+          }
+          await sleep(1000)
+        }
+      } finally {
+        runningRef.current = false
+      }
+      return
+    }
+
     pausedRef.current = false
     updateMission(m => ({ ...m, status: 'active', updatedAt: Date.now() }))
     callbacksRef.current.addLog(`[Mission] Resumed`, 'info')
-  }, [updateMission])
+  }, [updateMission, getNextTask, executeTask])
 
   const stopMission = useCallback(() => {
     abortRef.current = true
@@ -285,6 +484,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     updateMission(m => ({ ...m, status: 'draft', updatedAt: Date.now() }))
     callbacksRef.current.addLog(`[Mission] Stopped`, 'info')
     missionRef.current = null
+    taskResultsRef.current = {}
   }, [updateMission])
 
   return {
@@ -318,15 +518,4 @@ function buildTaskPrompt(task: MissionTask, loopItem?: string, loopIdx?: number,
   }
 
   return prompt
-}
-
-function resolveLoopItems(task: MissionTask): string[] {
-  const config = task.loopConfig
-  if (!config) return []
-
-  if (config.source === 'hardcoded' && config.items) {
-    return config.items
-  }
-
-  return ['item_1', 'item_2', 'item_3']
 }

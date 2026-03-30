@@ -880,6 +880,18 @@ body {
   font-weight: 600;
   animation: mission-pulse 2s ease-in-out infinite;
 }
+.mission-resume-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 179, 71, 0.1);
+  border: 1px solid rgba(255, 179, 71, 0.3);
+  color: #ffd699;
+  font-size: 12px;
+  margin-top: 4px;
+}
 @keyframes mission-pulse {
   0%, 100% { border-color: rgba(82, 134, 255, 0.25); }
   50% { border-color: rgba(82, 134, 255, 0.5); box-shadow: 0 0 12px rgba(82, 134, 255, 0.15); }
