@@ -1,0 +1,170 @@
+import { Mission, createMission, createMissionTask } from '../types/mission'
+
+export const MISSION_TEMPLATES: Mission[] = [
+  createMission({
+    id: 'template-reddit-outreach',
+    name: 'Reddit Sales Outreach',
+    description: 'Research trending topics, create an engaging post, monitor for replies, and respond to comments.',
+    status: 'draft',
+    tasks: [
+      createMissionTask({
+        id: 'rt-1',
+        description: 'Navigate to the target subreddit and research the top 5 trending posts to understand current topics and tone.',
+        targetUrl: 'https://www.reddit.com/r/sales/',
+        successCriteria: 'Page shows the subreddit feed with visible post titles',
+        type: 'action',
+      }),
+      createMissionTask({
+        id: 'rt-2',
+        description: 'Click "Create Post" to open the post composer.',
+        successCriteria: 'Post creation form is visible with title and body fields',
+        type: 'action',
+        dependsOn: ['rt-1'],
+      }),
+      createMissionTask({
+        id: 'rt-3',
+        description: 'Type a value-first post title that addresses a common pain point in the subreddit.',
+        successCriteria: 'Title field contains text',
+        type: 'action',
+        dependsOn: ['rt-2'],
+      }),
+      createMissionTask({
+        id: 'rt-4',
+        description: 'Type the post body with actionable advice, personal experience, and a soft call-to-action.',
+        successCriteria: 'Body field contains multiple paragraphs of text',
+        type: 'action',
+        dependsOn: ['rt-3'],
+      }),
+      createMissionTask({
+        id: 'rt-5',
+        description: 'Submit the post by clicking the Post/Submit button.',
+        successCriteria: 'Page navigates to the new post URL or shows success confirmation',
+        type: 'action',
+        dependsOn: ['rt-4'],
+      }),
+      createMissionTask({
+        id: 'rt-6',
+        description: 'If there are comments on the post, reply to each top-level comment with a helpful response.',
+        successCriteria: 'Replies are posted to all top-level comments',
+        type: 'loop',
+        dependsOn: ['rt-5'],
+        loopConfig: {
+          source: 'selector',
+          selector: '.comment .reply-button',
+          variableName: 'comment',
+        },
+      }),
+    ],
+  }),
+
+  createMission({
+    id: 'template-linkedin-campaign',
+    name: 'LinkedIn Connection Campaign',
+    description: 'Search for prospects, send personalized connection requests, and follow up with messages.',
+    status: 'draft',
+    tasks: [
+      createMissionTask({
+        id: 'lc-1',
+        description: 'Navigate to LinkedIn and search for prospects matching the target criteria.',
+        targetUrl: 'https://www.linkedin.com/search/results/people/',
+        successCriteria: 'Search results page shows people results',
+        type: 'action',
+      }),
+      createMissionTask({
+        id: 'lc-2',
+        description: 'For each prospect in the search results, click their profile to view details.',
+        successCriteria: 'Profile page is loaded with name and headline visible',
+        type: 'loop',
+        dependsOn: ['lc-1'],
+        loopConfig: {
+          source: 'selector',
+          selector: '.search-result__info a.app-aware-link',
+          variableName: 'prospect',
+        },
+      }),
+      createMissionTask({
+        id: 'lc-3',
+        description: 'If the prospect profile shows a Connect button, send a personalized connection request.',
+        successCriteria: 'Connection request sent confirmation appears',
+        type: 'conditional',
+        dependsOn: ['lc-2'],
+        conditionConfig: {
+          type: 'element_exists',
+          value: 'button[aria-label="Connect"]',
+          thenTaskId: 'lc-4',
+          elseTaskId: 'lc-5',
+        },
+      }),
+      createMissionTask({
+        id: 'lc-4',
+        description: 'Click Connect and add a personalized note mentioning something specific from their profile.',
+        successCriteria: 'Connection request dialog shows "sent" or closes successfully',
+        type: 'action',
+        dependsOn: ['lc-3'],
+      }),
+      createMissionTask({
+        id: 'lc-5',
+        description: 'If already connected, send a follow-up message about shared interests.',
+        successCriteria: 'Message sent confirmation appears',
+        type: 'action',
+        dependsOn: ['lc-3'],
+      }),
+    ],
+  }),
+
+  createMission({
+    id: 'template-competitive-research',
+    name: 'Competitive Research',
+    description: 'Visit competitor sites, capture key information, extract pricing and features, compile notes.',
+    status: 'draft',
+    tasks: [
+      createMissionTask({
+        id: 'cr-1',
+        description: 'Search Google for the competitor company to find their main website.',
+        targetUrl: 'https://www.google.com',
+        successCriteria: 'Google search results are displayed',
+        type: 'action',
+      }),
+      createMissionTask({
+        id: 'cr-2',
+        description: 'Click the first organic result to navigate to the competitor website.',
+        successCriteria: 'Competitor website homepage is loaded',
+        type: 'action',
+        dependsOn: ['cr-1'],
+      }),
+      createMissionTask({
+        id: 'cr-3',
+        description: 'Navigate to the pricing page and extract pricing tiers, features, and any free trial details.',
+        successCriteria: 'Pricing information is visible on the page',
+        type: 'action',
+        dependsOn: ['cr-2'],
+      }),
+      createMissionTask({
+        id: 'cr-4',
+        description: 'Navigate to the features or product page and list key capabilities.',
+        successCriteria: 'Features list or product details are visible',
+        type: 'action',
+        dependsOn: ['cr-2'],
+      }),
+      createMissionTask({
+        id: 'cr-5',
+        description: 'If the page has a blog or resources section, note the most recent content topics.',
+        successCriteria: 'Blog titles or resource titles are visible',
+        type: 'conditional',
+        dependsOn: ['cr-2'],
+        conditionConfig: {
+          type: 'element_exists',
+          value: 'a[href*="blog"], a[href*="resources"]',
+          thenTaskId: 'cr-6',
+        },
+      }),
+      createMissionTask({
+        id: 'cr-6',
+        description: 'Visit the blog/resources page and note the 3 most recent post titles and topics.',
+        successCriteria: 'Blog post titles are visible',
+        type: 'action',
+        dependsOn: ['cr-5'],
+      }),
+    ],
+  }),
+]

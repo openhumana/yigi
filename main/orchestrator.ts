@@ -243,15 +243,24 @@ class ModelOrchestrator {
     return 75
   }
 
+  private activeSkillsContent: string = ''
+
+  public setActiveSkills(content: string) {
+    this.activeSkillsContent = content
+  }
+
   private getSystemPrompt(workflow?: string): string {
     const masterKB = this.store.get('MASTER_KB') as string || ''
+    const skillsBlock = this.activeSkillsContent
+      ? `\n\nACTIVE SKILLS (follow these guidelines for the current context):\n${this.activeSkillsContent}`
+      : ''
 
     return `You are Yogi, an Actionable Sales Automation Agent for Open Humana.
 Your goal is to act like "Replit Agent": the user gives an English command, and you translate it into browser DOM actions.
 
 WORKFLOW: ${workflow || 'General'}
 KNOWLEDGE BASE: ${masterKB || '(none yet — upload a PDF in Settings)'}
-
+${skillsBlock}
 OPERATING PROTOCOL:
 1. The user's message will include a BROWSER CONTEXT block listing interactive elements and their CSS selectors.
 2. Use those selectors to build precise dom_click or dom_type tasks.

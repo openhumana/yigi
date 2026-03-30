@@ -70,6 +70,21 @@ const yogi = {
 
   showNotification: (title: string, body: string) =>
     ipcRenderer.invoke('show-notification', { title, body }),
+
+  getMissions: () =>
+    ipcRenderer.invoke('get-missions'),
+
+  saveMissions: (missions: any[]) =>
+    ipcRenderer.invoke('save-missions', missions),
+
+  getSkills: () =>
+    ipcRenderer.invoke('get-skills'),
+
+  saveSkills: (skills: any[]) =>
+    ipcRenderer.invoke('save-skills', skills),
+
+  injectSkills: (content: string) =>
+    ipcRenderer.invoke('inject-skills', { content }),
 }
 
 // 🟢 THE FIX: Use both methods for maximum reliability

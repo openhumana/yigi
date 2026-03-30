@@ -458,6 +458,30 @@ ipcMain.handle('show-notification', async (_, { title, body }) => {
   }
 })
 
+// ── MISSIONS & SKILLS PERSISTENCE ─────────────────────────────────────
+ipcMain.handle('get-missions', () => {
+  return (orchestrator.store.get('MISSIONS') as any[]) || []
+})
+
+ipcMain.handle('save-missions', (_, missions) => {
+  orchestrator.store.set('MISSIONS', missions)
+  return { status: 'success' }
+})
+
+ipcMain.handle('get-skills', () => {
+  return (orchestrator.store.get('SKILLS') as any[]) || []
+})
+
+ipcMain.handle('save-skills', (_, skills) => {
+  orchestrator.store.set('SKILLS', skills)
+  return { status: 'success' }
+})
+
+ipcMain.handle('inject-skills', (_, { content }) => {
+  orchestrator.setActiveSkills(content || '')
+  return { status: 'success' }
+})
+
 // ── SNAPSHOT: Capture current browser state for before/after comparison ──
 ipcMain.handle('capture-snapshot', async () => {
   try {

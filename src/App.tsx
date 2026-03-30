@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X, Rocket, Play, Pause, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, XCircle } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X, Rocket, Play, Pause, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, XCircle, Target, BookOpen, Square } from 'lucide-react'
+import { Mission, Skill } from './types/mission'
+import { DEFAULT_SKILLS } from './data/skills'
+import MissionEditor from './components/MissionEditor'
+import SkillsLibrary from './components/SkillsLibrary'
+import { useMissionRunner } from './hooks/useMissionRunner'
 
 // Detect Electron environment (window.yogi is exposed by the preload bridge)
 const isElectron = !!(window as any).yogi
@@ -249,6 +254,11 @@ const App = () => {
   const [autoPilot, setAutoPilot] = useState(false)
   const autoPilotRef = useRef(false)
   const [escalation, setEscalation] = useState<{ message: string; taskId?: string } | null>(null)
+
+  const [sidePanel, setSidePanel] = useState<'chat' | 'missions' | 'skills'>('chat')
+  const [missions, setMissions] = useState<Mission[]>([])
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [activeMission, setActiveMission] = useState<Mission | null>(null)
   const [executionLog, setExecutionLog] = useState<ExecLogEntry[]>([])
   const [showExecLog, setShowExecLog] = useState(false)
   const [autoExecuting, setAutoExecuting] = useState(false)
@@ -334,6 +344,162 @@ const App = () => {
     }
     loadSettings()
   }, [])
+
+  const saveMissions = useCallback(async (missionList: Mission[]) => {
+    setMissions(missionList)
+    if (isElectron) {
+      await (window as any).yogi.saveMissions(missionList)
+    } else {
+      localStorage.setItem('yogi_missions', JSON.stringify(missionList))
+    }
+  }, [])
+
+  const saveSkills = useCallback(async (skillList: Skill[]) => {
+    setSkills(skillList)
+    if (isElectron) {
+      await (window as any).yogi.saveSkills(skillList)
+    } else {
+      localStorage.setItem('yogi_skills', JSON.stringify(skillList))
+    }
+  }, [])
+
+  useEffect(() => {
+    const loadMissions = async () => {
+      if (isElectron) {
+        const m = await (window as any).yogi.getMissions()
+        if (m && m.length) setMissions(m)
+      } else {
+        const saved = localStorage.getItem('yogi_missions')
+        if (saved) setMissions(JSON.parse(saved))
+      }
+    }
+    const loadSkills = async () => {
+      if (isElectron) {
+        const s = await (window as any).yogi.getSkills()
+        setSkills(s && s.length ? s : DEFAULT_SKILLS)
+      } else {
+        const saved = localStorage.getItem('yogi_skills')
+        setSkills(saved ? JSON.parse(saved) : DEFAULT_SKILLS)
+      }
+    }
+    loadMissions()
+    loadSkills()
+  }, [])
+
+  useEffect(() => {
+    const activeSkills = skills
+      .filter(s => s.enabled)
+      .filter(s => s.activationTriggers.some(t => {
+        if (t.type === 'url_pattern') return inputUrl.toLowerCase().includes(t.value.toLowerCase())
+        return false
+      }))
+      .sort((a, b) => b.priority - a.priority)
+
+    const content = activeSkills.map(s => `--- SKILL: ${s.name} ---\n${s.content}`).join('\n\n')
+
+    if (isElectron) {
+      (window as any).yogi.injectSkills(content)
+    }
+  }, [inputUrl, skills])
+
+  const handleSaveMission = useCallback((mission: Mission) => {
+    setMissions(prev => {
+      const exists = prev.findIndex(m => m.id === mission.id)
+      const updated = exists >= 0 ? prev.map(m => m.id === mission.id ? mission : m) : [...prev, mission]
+      if (isElectron) {
+        (window as any).yogi.saveMissions(updated)
+      } else {
+        localStorage.setItem('yogi_missions', JSON.stringify(updated))
+      }
+      return updated
+    })
+  }, [])
+
+  const handleDeleteMission = useCallback((id: string) => {
+    setMissions(prev => {
+      const updated = prev.filter(m => m.id !== id)
+      if (isElectron) {
+        (window as any).yogi.saveMissions(updated)
+      } else {
+        localStorage.setItem('yogi_missions', JSON.stringify(updated))
+      }
+      return updated
+    })
+  }, [])
+
+  const handleSaveSkill = useCallback((skill: Skill) => {
+    setSkills(prev => {
+      const exists = prev.findIndex(s => s.id === skill.id)
+      const updated = exists >= 0 ? prev.map(s => s.id === skill.id ? skill : s) : [...prev, skill]
+      if (isElectron) {
+        (window as any).yogi.saveSkills(updated)
+      } else {
+        localStorage.setItem('yogi_skills', JSON.stringify(updated))
+      }
+      return updated
+    })
+  }, [])
+
+  const handleDeleteSkill = useCallback((id: string) => {
+    setSkills(prev => {
+      const updated = prev.filter(s => s.id !== id)
+      if (isElectron) {
+        (window as any).yogi.saveSkills(updated)
+      } else {
+        localStorage.setItem('yogi_skills', JSON.stringify(updated))
+      }
+      return updated
+    })
+  }, [])
+
+  const handleToggleSkill = useCallback((id: string, enabled: boolean) => {
+    setSkills(prev => {
+      const updated = prev.map(s => s.id === id ? { ...s, enabled, updatedAt: Date.now() } : s)
+      if (isElectron) {
+        (window as any).yogi.saveSkills(updated)
+      } else {
+        localStorage.setItem('yogi_skills', JSON.stringify(updated))
+      }
+      return updated
+    })
+  }, [])
+
+  const missionRunner = useMissionRunner({
+    sendChat: async (prompt: string) => {
+      setInput('')
+      setMessages(prev => [...prev, { role: 'agent', message: `[Mission] ${prompt.slice(0, 100)}...` }])
+      if (isElectron) {
+        const res = await (window as any).yogi.sendChatMessage(prompt, 'high', workflow, settings)
+        if (res.text) setMessages(prev => [...prev, { role: 'agent', message: res.text }])
+        if (res.tasks?.length) {
+          setTasks(res.tasks.map((t: any, i: number) => ({
+            ...t,
+            id: `task-${Date.now()}-${i}`,
+            confidence: typeof t.confidence === 'number' ? t.confidence : undefined,
+          })))
+        }
+      }
+    },
+    addLog: (msg: string, type?: string) => {
+      setThinkingLog(msg)
+      setThinkingLogs(prev => [...prev, msg])
+      if (type === 'alert') {
+        setNotification({ message: msg, type: 'alert' })
+      }
+    },
+    getBrowserUrl: () => inputUrl,
+    saveMission: (m: Mission) => handleSaveMission(m),
+    onComplete: (m: Mission) => {
+      setActiveMission(null)
+      setNotification({ message: `Mission "${m.name}" completed!`, type: 'info' })
+    },
+  })
+
+  const handleRunMission = useCallback((mission: Mission) => {
+    setActiveMission(mission)
+    setSidePanel('chat')
+    missionRunner.runMission(mission)
+  }, [missionRunner])
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1142,7 +1308,29 @@ ${currentInput}`
         <div className="sidebar-header">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ margin: 0 }}>Yogi Browser</h2>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+              <button
+                className={`panel-tab-btn ${sidePanel === 'chat' ? 'active' : ''}`}
+                title="Chat"
+                onClick={() => setSidePanel('chat')}
+              >
+                <Send size={14} />
+              </button>
+              <button
+                className={`panel-tab-btn ${sidePanel === 'missions' ? 'active' : ''}`}
+                title="Missions"
+                onClick={() => setSidePanel('missions')}
+              >
+                <Target size={14} />
+              </button>
+              <button
+                className={`panel-tab-btn ${sidePanel === 'skills' ? 'active' : ''}`}
+                title="Skills"
+                onClick={() => setSidePanel('skills')}
+              >
+                <BookOpen size={14} />
+              </button>
+              <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
               <button
                 className={`autopilot-toggle ${autoPilot ? 'active' : ''}`}
                 title={autoPilot ? 'Auto-Pilot ON — click to pause' : 'Auto-Pilot OFF — click to enable'}
@@ -1160,6 +1348,26 @@ ${currentInput}`
             <div className="autopilot-status">
               <div className="autopilot-pulse" />
               <span>{autoExecuting ? 'Yogi is working autonomously...' : 'Auto-Pilot ready — waiting for tasks'}</span>
+            </div>
+          )}
+          {activeMission && (
+            <div className="mission-running-banner">
+              <Target size={12} />
+              <span>Mission: {activeMission.name}</span>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                {missionRunner.isPaused() ? (
+                  <button className="mission-banner-btn" onClick={() => missionRunner.resumeMission()}>
+                    <Play size={11} /> Resume
+                  </button>
+                ) : (
+                  <button className="mission-banner-btn" onClick={() => missionRunner.pauseMission()}>
+                    <Pause size={11} /> Pause
+                  </button>
+                )}
+                <button className="mission-banner-btn stop" onClick={() => { missionRunner.stopMission(); setActiveMission(null) }}>
+                  <Square size={11} /> Stop
+                </button>
+              </div>
             </div>
           )}
           <select className="workflow-select" value={workflow} onChange={(e) => setWorkflow(e.target.value)}>
@@ -1188,121 +1396,146 @@ ${currentInput}`
           </div>
         )}
 
-        {/* ── Chat feed ── */}
-        <div className="chat-feed" ref={chatFeedRef}>
-          {messages.map((m, i) => (
-            <ChatBubble key={i} message={m.message} role={m.role} />
-          ))}
-
-          {isThinking && (
-            <div className="chat-bubble agent thinking" onClick={() => setIsDrawerOpen(true)}>
-              <div className="thinking-label">YOGI IS PROCESSING…</div>
-              <div className="thinking-status">{thinkingLog}</div>
-            </div>
-          )}
-        </div>
-
-        {/* ── Technical log drawer ── */}
-        {isDrawerOpen && (
-          <div className="thinking-drawer">
-            <div className="drawer-header">
-              <h3>Process Log</h3>
-              <button
-                onClick={() => setIsDrawerOpen(false)}
-                style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="drawer-logs">
-              {thinkingLogs.map((log, i) => (
-                <div key={i} className="log-line">{log}</div>
-              ))}
-              <div ref={logsEndRef} />
-            </div>
-          </div>
+        {sidePanel === 'missions' && (
+          <MissionEditor
+            missions={missions}
+            onSave={handleSaveMission}
+            onDelete={handleDeleteMission}
+            onRun={handleRunMission}
+            onClose={() => setSidePanel('chat')}
+          />
         )}
 
-        {/* ── Execution Log Panel ── */}
-        {executionLog.length > 0 && (
-          <div className="exec-log-panel">
-            <div className="exec-log-header" onClick={() => setShowExecLog(v => !v)}>
-              <div className="exec-log-title">
-                <Clock size={13} />
-                <span>EXECUTION LOG ({executionLog.length})</span>
-              </div>
-              {showExecLog ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+        {sidePanel === 'skills' && (
+          <SkillsLibrary
+            skills={skills}
+            currentUrl={inputUrl}
+            onSave={handleSaveSkill}
+            onDelete={handleDeleteSkill}
+            onToggle={handleToggleSkill}
+            onClose={() => setSidePanel('chat')}
+          />
+        )}
+
+        {sidePanel === 'chat' && (
+          <>
+            {/* ── Chat feed ── */}
+            <div className="chat-feed" ref={chatFeedRef}>
+              {messages.map((m, i) => (
+                <ChatBubble key={i} message={m.message} role={m.role} />
+              ))}
+
+              {isThinking && (
+                <div className="chat-bubble agent thinking" onClick={() => setIsDrawerOpen(true)}>
+                  <div className="thinking-label">YOGI IS PROCESSING…</div>
+                  <div className="thinking-status">{thinkingLog}</div>
+                </div>
+              )}
             </div>
-            {showExecLog && (
-              <div className="exec-log-entries">
-                {executionLog.slice().reverse().map(entry => (
-                  <div key={entry.id} className={`exec-log-entry exec-log-${entry.status}`}>
-                    <div className="exec-log-entry-icon">
-                      {entry.status === 'success' && <CheckCircle size={12} />}
-                      {entry.status === 'running' && <RotateCw size={12} className="spin" />}
-                      {entry.status === 'retry' && <AlertTriangle size={12} />}
-                      {entry.status === 'escalate' && <XCircle size={12} />}
-                      {entry.status === 'skipped' && <Pause size={12} />}
-                    </div>
-                    <div className="exec-log-entry-content">
-                      <div className="exec-log-entry-desc">{entry.description}</div>
-                      <div className="exec-log-entry-meta">
-                        {new Date(entry.timestamp).toLocaleTimeString()}
-                        {entry.elapsed != null && ` · ${(entry.elapsed / 1000).toFixed(1)}s`}
-                        {entry.retries != null && entry.retries > 0 && ` · ${entry.retries} ${entry.retries === 1 ? 'retry' : 'retries'}`}
-                        {entry.reason && ` · ${entry.reason}`}
-                        {entry.confidence != null && ` · ${entry.confidence}%`}
+
+            {/* ── Technical log drawer ── */}
+            {isDrawerOpen && (
+              <div className="thinking-drawer">
+                <div className="drawer-header">
+                  <h3>Process Log</h3>
+                  <button
+                    onClick={() => setIsDrawerOpen(false)}
+                    style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="drawer-logs">
+                  {thinkingLogs.map((log, i) => (
+                    <div key={i} className="log-line">{log}</div>
+                  ))}
+                  <div ref={logsEndRef} />
+                </div>
+              </div>
+            )}
+
+            {/* ── Execution Log Panel ── */}
+            {executionLog.length > 0 && (
+              <div className="exec-log-panel">
+                <div className="exec-log-header" onClick={() => setShowExecLog(v => !v)}>
+                  <div className="exec-log-title">
+                    <Clock size={13} />
+                    <span>EXECUTION LOG ({executionLog.length})</span>
+                  </div>
+                  {showExecLog ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                </div>
+                {showExecLog && (
+                  <div className="exec-log-entries">
+                    {executionLog.slice().reverse().map(entry => (
+                      <div key={entry.id} className={`exec-log-entry exec-log-${entry.status}`}>
+                        <div className="exec-log-entry-icon">
+                          {entry.status === 'success' && <CheckCircle size={12} />}
+                          {entry.status === 'running' && <RotateCw size={12} className="spin" />}
+                          {entry.status === 'retry' && <AlertTriangle size={12} />}
+                          {entry.status === 'escalate' && <XCircle size={12} />}
+                          {entry.status === 'skipped' && <Pause size={12} />}
+                        </div>
+                        <div className="exec-log-entry-content">
+                          <div className="exec-log-entry-desc">{entry.description}</div>
+                          <div className="exec-log-entry-meta">
+                            {new Date(entry.timestamp).toLocaleTimeString()}
+                            {entry.elapsed != null && ` · ${(entry.elapsed / 1000).toFixed(1)}s`}
+                            {entry.retries != null && entry.retries > 0 && ` · ${entry.retries} ${entry.retries === 1 ? 'retry' : 'retries'}`}
+                            {entry.reason && ` · ${entry.reason}`}
+                            {entry.confidence != null && ` · ${entry.confidence}%`}
+                          </div>
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── HITL Approval Queue ── */}
+            {tasks.length > 0 && (
+              <div className="task-queue">
+                <div className="task-queue-label">
+                  {autoPilot ? 'AUTO-EXECUTING' : 'HITL APPROVAL QUEUE'} ({tasks.length})
+                </div>
+                {tasks.map(t => (
+                  <div key={t.id} className={`task-card ${autoPilot && !t.sensitive ? 'auto-task' : ''}`}>
+                    <div className="task-card-header">
+                      <span className="task-action">{t.action.replace('dom_', '').toUpperCase()}</span>
+                      {(!autoPilot || t.sensitive) && (
+                        <button className="approve-btn" onClick={() => approveTask(t.id)}>
+                          <ShieldCheck size={13} style={{ marginRight: '5px' }} />
+                          Approve
+                        </button>
+                      )}
+                      {autoPilot && !t.sensitive && (
+                        <span className="auto-badge">AUTO</span>
+                      )}
                     </div>
+                    <p className="task-desc">{t.description}</p>
+                    {t.payload?.selector && (
+                      <code className="task-selector">{t.payload.selector}</code>
+                    )}
                   </div>
                 ))}
               </div>
             )}
-          </div>
-        )}
 
-        {/* ── HITL Approval Queue ── */}
-        {tasks.length > 0 && (
-          <div className="task-queue">
-            <div className="task-queue-label">
-              {autoPilot ? 'AUTO-EXECUTING' : 'HITL APPROVAL QUEUE'} ({tasks.length})
+            {/* ── Chat input ── */}
+            <div className="chat-input-container">
+              <input
+                className="chat-input"
+                placeholder="Tell Yogi what to do…"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+              />
+              <button className="send-btn" onClick={handleSend} disabled={isThinking}>
+                <Send size={18} />
+              </button>
             </div>
-            {tasks.map(t => (
-              <div key={t.id} className={`task-card ${autoPilot && !t.sensitive ? 'auto-task' : ''}`}>
-                <div className="task-card-header">
-                  <span className="task-action">{t.action.replace('dom_', '').toUpperCase()}</span>
-                  {(!autoPilot || t.sensitive) && (
-                    <button className="approve-btn" onClick={() => approveTask(t.id)}>
-                      <ShieldCheck size={13} style={{ marginRight: '5px' }} />
-                      Approve
-                    </button>
-                  )}
-                  {autoPilot && !t.sensitive && (
-                    <span className="auto-badge">AUTO</span>
-                  )}
-                </div>
-                <p className="task-desc">{t.description}</p>
-                {t.payload?.selector && (
-                  <code className="task-selector">{t.payload.selector}</code>
-                )}
-              </div>
-            ))}
-          </div>
+          </>
         )}
-
-        {/* ── Chat input ── */}
-        <div className="chat-input-container">
-          <input
-            className="chat-input"
-            placeholder="Tell Yogi what to do…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-          />
-          <button className="send-btn" onClick={handleSend} disabled={isThinking}>
-            <Send size={18} />
-          </button>
-        </div>
 
         <div className={`resize-handle ${isResizing ? 'active' : ''}`} onMouseDown={startResizing} />
       </div>

@@ -29,6 +29,12 @@ Originally an Electron desktop application, adapted to run as a web app in the R
 - `main/human_interaction.ts` — Human-like typing (variable speed, typos) and mouse interaction
 - `preload/index.ts` — Electron contextBridge exposing `window.yogi`
 - `public/mock-browser.html` — Offline fallback with three realistic workflow layouts
+- `src/types/mission.ts` — Mission, MissionTask, Skill types + factory functions
+- `src/data/skills.ts` — 5 default skills (Reddit, LinkedIn, Google Research, Template)
+- `src/data/missions.ts` — 3 mission templates (Reddit, LinkedIn, Competitive Research)
+- `src/components/MissionEditor.tsx` — Mission CRUD panel with task editor
+- `src/components/SkillsLibrary.tsx` — Skills browsing/editing panel
+- `src/hooks/useMissionRunner.ts` — Mission execution engine with abort safety
 
 ## IPC Handlers (main/index.ts)
 
@@ -46,6 +52,9 @@ Originally an Electron desktop application, adapted to run as a web app in the R
 | `analyze-screenshot` | renderer→main | Sends screenshot to vision LLM for analysis |
 | `capture-snapshot` | renderer→main | Captures full browser state snapshot (URL + title + elements) |
 | `show-notification` | renderer→main | Fires Electron desktop notification (clicks bring Yogi to foreground) |
+| `get-missions` / `save-missions` | renderer→main | CRUD for mission workflows (electron-store) |
+| `get-skills` / `save-skills` | renderer→main | CRUD for skills library (electron-store) |
+| `inject-skills` | renderer→main | Injects active skill content into orchestrator system prompt |
 
 ## Automation Flow (with Verify Loop + Auto-Pilot)
 
@@ -110,6 +119,44 @@ Screenshot-based visual intelligence:
 - Sends to GPT-4o (vision) or Gemini with structured prompt
 - Returns: page description, action success assessment, interactive elements list, CAPTCHA detection, error visibility
 - Used for: low-confidence verification fallback, screenshot-on-demand by AI
+
+## Mission Workflow Engine (Task #5)
+
+Multi-step mission execution with loops, conditionals, and structured task dependencies.
+
+### Key Files
+
+- `src/types/mission.ts` — TypeScript types for Mission, MissionTask, Skill, and factory functions
+- `src/data/skills.ts` — 5 built-in skills (Reddit posting, Reddit reply, LinkedIn outreach, Google research, custom template)
+- `src/data/missions.ts` — 3 mission templates (Reddit outreach, LinkedIn campaign, competitive research)
+- `src/components/MissionEditor.tsx` — Full CRUD panel for creating/editing/running missions with task reordering
+- `src/components/SkillsLibrary.tsx` — Skills browsing/editing panel with URL-based activation indicators
+- `src/hooks/useMissionRunner.ts` — Async mission engine with abort/pause/resume, loop interrupt safety, dependency-aware task scheduling
+
+### Mission Task Types
+
+- **action**: Standard browser automation task (navigate, click, type)
+- **loop**: Repeats over a list (hardcoded items, CSS selector on page, or previous task output)
+- **conditional**: Branches based on URL patterns, element existence, or previous task status
+
+### Skills System
+
+Skills are context documents injected into the AI system prompt when their activation triggers match:
+- **url_pattern**: Activates when the browser URL contains the pattern (e.g., "reddit.com")
+- **mission_type**: Activates during missions of a matching type
+- **manual**: Only activated explicitly
+
+Skills are sorted by priority (higher = loaded first) and injected via `orchestrator.setActiveSkills()`.
+
+### Sidebar Panel Navigation
+
+Three panel tabs in the sidebar header: Chat (default), Missions (Target icon), Skills (Book icon). The active mission shows a control banner with Pause/Resume/Stop.
+
+### Persistence
+
+- Electron: electron-store via IPC (`get-missions`, `save-missions`, `get-skills`, `save-skills`)
+- Web mode: localStorage (`yogi_missions`, `yogi_skills`)
+- Default skills auto-loaded on first run if no saved skills exist
 
 ## Development
 
