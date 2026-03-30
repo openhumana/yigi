@@ -7,11 +7,8 @@ import SkillsLibrary from './components/SkillsLibrary'
 import OnboardingScreen from './components/OnboardingScreen'
 import { useMissionRunner } from './hooks/useMissionRunner'
 
-// Detect Electron via bridge OR via Node.js process object (nodeIntegration: true)
-const isElectron = !!(window as any).yogi ||
-  (typeof process !== 'undefined' &&
-   typeof (process as any).versions !== 'undefined' &&
-   !!(process as any).versions.electron)
+// Detect Electron: window.yogi is set by the preload bridge at startup
+const isElectron = !!(window as any).yogi
 
 // ──────────────────────────────────────────────
 // MOCK MODE — Web preview simulation layer
