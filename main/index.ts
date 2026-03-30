@@ -282,10 +282,6 @@ ipcMain.handle('dom-action', async (_, { selector, action, value }) => {
   }
 })
 
-ipcMain.handle('get-quotas', () => {
-  return orchestrator.getQuotas()
-})
-
 ipcMain.handle('get-settings', () => {
   const settings: Record<string, any> = {}
   const keys = ['GOOGLE_KEYS', 'OPENAI_KEYS', 'GROQ_KEYS', 'MASTER_KB', 'MODEL_STRATEGY']

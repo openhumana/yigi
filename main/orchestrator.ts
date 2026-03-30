@@ -1,7 +1,7 @@
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai'
 import { ChatOpenAI } from '@langchain/openai'
 import { ChatGroq } from '@langchain/groq'
-import { HumanMessage, SystemMessage, BaseMessage } from '@langchain/core/messages'
+import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from '@langchain/core/messages'
 import Store from 'electron-store'
 
 // ──────────────────────────────────────────────────────────
@@ -203,7 +203,12 @@ class ModelOrchestrator {
 
   private getPoolOrder(prompt: string): string[] {
     const strategy = (this.store.get('MODEL_STRATEGY') as string) || 'quality'
-    if (strategy === 'quality' && this.isContentTask(prompt)) {
+    if (strategy === 'speed') {
+      // Speed mode: Groq only — no paid provider fallback
+      return ['groq']
+    }
+    // Quality mode: Gemini Pro for content tasks, Groq for DOM execution
+    if (this.isContentTask(prompt)) {
       return ['google', 'groq', 'openai']
     }
     return ['groq', 'google', 'openai']
@@ -360,7 +365,7 @@ class ModelOrchestrator {
     const confidence = this.extractConfidence(rawText)
 
     this.history.push(new HumanMessage(prompt))
-    this.history.push(new HumanMessage(rawText))
+    this.history.push(new AIMessage(rawText))
 
     if (tasks?.length) {
       const updated = [...lessons, `- Worked: "${prompt.slice(0, 30)}..." -> ${tasks.length} actions`].slice(-20)
