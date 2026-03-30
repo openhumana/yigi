@@ -1,11 +1,13 @@
 import 'dotenv/config'
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, NativeImage } from 'electron'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import fs from 'fs'
 import { orchestrator } from './orchestrator'
 import { sandbox } from './sandbox'
 import { humanInteraction } from './human_interaction'
+import { validateAction, detectCaptcha, detectSensitiveAction, BrowserSnapshot, ActionContext } from './validator'
+import { analyzeScreenshot } from './vision'
 
 process.env.DIST_ELECTRON = join(__dirname, '../')
 process.env.DIST = join(process.env.DIST_ELECTRON, '../dist')
@@ -241,4 +243,147 @@ ipcMain.handle('save-settings', (_, settings) => {
   })
   orchestrator.initProviders()
   return { status: 'success' }
+})
+
+// ── Helper: find the active webview WebContents ──────────────────────────
+function getWebview() {
+  const { webContents } = require('electron')
+  const allWc = webContents.getAllWebContents()
+  return allWc.find((wc: any) => wc.getType() === 'webview') || null
+}
+
+// ── Helper: capture a snapshot of the current browser state ──────────────
+async function captureBrowserSnapshot(): Promise<BrowserSnapshot> {
+  const webview = getWebview()
+  if (!webview) return { url: '', title: '', elements: [] }
+
+  try {
+    const snapshot = await webview.executeJavaScript(`
+      (() => {
+        const nodes = Array.from(document.querySelectorAll(
+          'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="menuitem"]'
+        ));
+        return {
+          url: location.href,
+          title: document.title,
+          elements: nodes.slice(0, 60).map(el => {
+            let selector = '';
+            if (el.id) {
+              selector = '#' + el.id;
+            } else if (el.getAttribute('name')) {
+              selector = el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
+            } else if (el.getAttribute('data-testid')) {
+              selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
+            } else if (el.getAttribute('aria-label')) {
+              selector = el.tagName.toLowerCase() + '[aria-label="' + el.getAttribute('aria-label') + '"]';
+            } else if (el.placeholder) {
+              selector = el.tagName.toLowerCase() + '[placeholder="' + el.placeholder + '"]';
+            } else {
+              selector = el.tagName.toLowerCase();
+            }
+            return {
+              tag: el.tagName.toLowerCase(),
+              text: (el.innerText || el.value || '').trim().slice(0, 40),
+              selector,
+              ariaLabel: el.getAttribute('aria-label') || '',
+              placeholder: el.placeholder || '',
+              type: el.type || '',
+            };
+          })
+        };
+      })()
+    `)
+    return snapshot
+  } catch (e: any) {
+    console.error('[Snapshot] Failed:', e.message)
+    return { url: '', title: '', elements: [] }
+  }
+}
+
+// ── SCREENSHOT: Capture the webview as a base64 PNG ──────────────────────
+ipcMain.handle('capture-screenshot', async () => {
+  try {
+    const webview = getWebview()
+    if (!webview) return { status: 'error', message: 'No webview available', image: null }
+
+    const image: NativeImage = await webview.capturePage()
+    const base64 = image.toPNG().toString('base64')
+    return { status: 'success', image: base64 }
+  } catch (error: any) {
+    console.error('[Screenshot] Failed:', error.message)
+    return { status: 'error', message: error.message, image: null }
+  }
+})
+
+// ── STABILITY: Wait for the page to settle after an action ───────────────
+ipcMain.handle('wait-for-stability', async (_, { timeoutMs } = { timeoutMs: 5000 }) => {
+  try {
+    const webview = getWebview()
+    if (!webview) return { status: 'error', message: 'No webview' }
+
+    await webview.executeJavaScript(`
+      new Promise((resolve) => {
+        let timer = null;
+        const observer = new MutationObserver(() => {
+          clearTimeout(timer);
+          timer = setTimeout(() => { observer.disconnect(); resolve(true); }, 500);
+        });
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+        timer = setTimeout(() => { observer.disconnect(); resolve(true); }, ${timeoutMs});
+      })
+    `)
+    return { status: 'success' }
+  } catch (error: any) {
+    return { status: 'error', message: error.message }
+  }
+})
+
+// ── VALIDATE: Run the verify-after-action loop ───────────────────────────
+ipcMain.handle('validate-action', async (_, { action, before }) => {
+  try {
+    const webview = getWebview()
+    if (!webview) return { status: 'error', message: 'No webview' }
+
+    const after = await captureBrowserSnapshot()
+    const result = validateAction(action as ActionContext, before as BrowserSnapshot, after)
+
+    const captcha = detectCaptcha(after)
+    if (captcha) {
+      return {
+        validation: { status: 'escalate', reason: 'CAPTCHA detected on page — human intervention required', confidence: 10 },
+        after,
+        captchaDetected: true,
+      }
+    }
+
+    return { validation: result, after, captchaDetected: false }
+  } catch (error: any) {
+    console.error('[Validate] Failed:', error.message)
+    return {
+      validation: { status: 'retry', reason: `Validation error: ${error.message}`, confidence: 0 },
+      after: null,
+      captchaDetected: false,
+    }
+  }
+})
+
+// ── VISION: Analyze a screenshot with a vision LLM ───────────────────────
+ipcMain.handle('analyze-screenshot', async (_, { screenshotBase64, actionDescription, expectedOutcome }) => {
+  try {
+    const analysis = await analyzeScreenshot(screenshotBase64, actionDescription, expectedOutcome)
+    return { status: 'success', analysis }
+  } catch (error: any) {
+    console.error('[Vision] Analysis failed:', error.message)
+    return { status: 'error', message: error.message }
+  }
+})
+
+// ── SNAPSHOT: Capture current browser state for before/after comparison ──
+ipcMain.handle('capture-snapshot', async () => {
+  try {
+    const snapshot = await captureBrowserSnapshot()
+    return { status: 'success', snapshot }
+  } catch (error: any) {
+    return { status: 'error', message: error.message, snapshot: null }
+  }
 })

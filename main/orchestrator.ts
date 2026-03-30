@@ -167,9 +167,14 @@ class ModelOrchestrator {
         this.store.set('LESSONS_LEARNED', updatedLessons)
       }
 
+      const requestScreenshot = this.extractScreenshotRequest(rawText)
+      const confidence = this.extractConfidence(rawText)
+
       return {
         text: uiMessage,
         tasks: tasks,
+        requestScreenshot,
+        confidence,
       }
     } catch (e: any) {
       throw e
@@ -216,6 +221,28 @@ class ModelOrchestrator {
     return null
   }
 
+  private extractScreenshotRequest(text: string): boolean {
+    try {
+      const match = text.match(/```json\s*([\s\S]*?)```/)
+      if (match) {
+        const parsed = JSON.parse(match[1].trim())
+        return !!parsed.requestScreenshot
+      }
+    } catch (e) {}
+    return false
+  }
+
+  private extractConfidence(text: string): number {
+    try {
+      const match = text.match(/```json\s*([\s\S]*?)```/)
+      if (match) {
+        const parsed = JSON.parse(match[1].trim())
+        return typeof parsed.confidence === 'number' ? parsed.confidence : 75
+      }
+    } catch (e) {}
+    return 75
+  }
+
   private getSystemPrompt(workflow?: string): string {
     const masterKB = this.store.get('MASTER_KB') as string || ''
 
@@ -231,6 +258,17 @@ OPERATING PROTOCOL:
 3. ALWAYS respond with EXACTLY ONE \`\`\`json code block — no other text outside it.
 4. The "thought" field is the ONLY thing shown to the user — keep it friendly and concise (one sentence).
 5. Never include raw JSON outside the code fence. Never include explanations outside the code fence.
+6. Each task MUST include a "confidence" field (0-100) indicating how confident you are that the action will succeed.
+7. If the BROWSER CONTEXT shows 0 elements or seems incomplete, set "requestScreenshot": true in your response to trigger a visual page analysis.
+
+VERIFY-AFTER-ACTION SYSTEM:
+After each action you produce, the system will automatically:
+- Wait for the page to stabilize (DOM mutations + network idle)
+- Re-scan the page for changes
+- Validate the action succeeded (URL change, element appearance/disappearance, page structure change)
+- Retry up to 3 times with exponential backoff if verification fails
+- Escalate to the human if all retries fail
+You do NOT need to add verification steps — the system handles this automatically.
 
 AVAILABLE ACTIONS:
 - dom_click: clicks an element  →  payload: { "selector": "CSS_SELECTOR" }
@@ -242,11 +280,14 @@ STRICT RESPONSE FORMAT — output ONLY this, nothing else:
 \`\`\`json
 {
   "thought": "One friendly sentence describing what you are about to do.",
+  "confidence": 85,
+  "requestScreenshot": false,
   "tasks": [
     {
       "id": "t1",
       "action": "dom_click",
       "description": "Short human-readable label",
+      "confidence": 90,
       "payload": { "selector": "#submit-btn" }
     }
   ]

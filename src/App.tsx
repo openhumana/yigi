@@ -413,7 +413,28 @@ ${currentInput}`
       setThinkingLog('Sending to AI brain...')
 
       // ── BRAIN: ask the AI ───────────────────────────────
-      const res = await (window as any).yogi.sendChatMessage(contextPrompt, 'high', workflow, settings)
+      let res = await (window as any).yogi.sendChatMessage(contextPrompt, 'high', workflow, settings)
+
+      if (res.requestScreenshot) {
+        setThinkingLog('📸 AI requested visual analysis — capturing screenshot...')
+        try {
+          const screenshotRes = await (window as any).yogi.captureScreenshot()
+          if (screenshotRes.status === 'success' && screenshotRes.image) {
+            const visionRes = await (window as any).yogi.analyzeScreenshot(
+              screenshotRes.image,
+              `User requested: ${currentInput}`,
+              undefined
+            )
+            if (visionRes.status === 'success' && visionRes.analysis) {
+              setThinkingLog(`👁 Visual context: ${visionRes.analysis.description}`)
+              const visualContext = `${elementsContext}\n\nVISUAL ANALYSIS OF PAGE:\n${visionRes.analysis.description}\nVisually identified elements: ${visionRes.analysis.interactiveElements.join(', ')}\nCAPTCHA detected: ${visionRes.analysis.captchaDetected}\n\nUSER REQUEST:\n${currentInput}`
+              res = await (window as any).yogi.sendChatMessage(visualContext, 'high', workflow, settings)
+            }
+          }
+        } catch (e: any) {
+          setThinkingLog(`👁 Vision unavailable: ${e.message}`)
+        }
+      }
 
       setMessages(prev => [...prev, { role: 'agent', message: res.text || 'Done.' }])
 
@@ -456,12 +477,75 @@ ${currentInput}`
     }
   }
 
-  // ── HITL: approve a queued task ──────────────────────────
+  // ── Verification logging helper ─────────────────────────
+  const logVerification = (msg: string) => {
+    setThinkingLog(msg)
+    setThinkingLogs(prev => {
+      const updated = [...prev, msg]
+      localStorage.setItem('thinkingLogs', JSON.stringify(updated.slice(-100)))
+      return updated
+    })
+  }
+
+  // ── Web mode: capture snapshot from proxy iframe ───────
+  const captureWebSnapshot = (): { url: string; title: string; elements: any[] } => {
+    return {
+      url: inputUrl,
+      title: document.title,
+      elements: proxyElementsRef.current.map(e => ({
+        tag: e.tag,
+        text: e.text || '',
+        selector: e.selector,
+        ariaLabel: e.ariaLabel || '',
+        placeholder: e.placeholder || '',
+        type: e.type || '',
+      })),
+    }
+  }
+
+  // ── Web mode: wait for proxy DOM to stabilize after action ─
+  const waitForWebStability = async () => {
+    await sleep(800)
+    const iframe = webviewRef.current as HTMLIFrameElement | null
+    if (iframe?.contentWindow) {
+      iframe.contentWindow.postMessage({ type: 'yogi-dom-request' }, '*')
+    }
+    await sleep(600)
+  }
+
+  // ── Heuristic validator for web mode ──────────────────
+  const validateWebAction = (
+    action: { action: string; selector: string; value?: string },
+    before: { url: string; title: string; elements: any[] },
+    after: { url: string; title: string; elements: any[] }
+  ): { status: string; reason: string; confidence: number } => {
+    const urlChanged = before.url !== after.url
+    const elementCountDelta = after.elements.length - before.elements.length
+
+    if (action.action === 'dom_click') {
+      if (urlChanged) return { status: 'success', reason: `Page navigated to ${after.url}`, confidence: 95 }
+      if (Math.abs(elementCountDelta) >= 3) return { status: 'success', reason: `Page changed (${elementCountDelta > 0 ? '+' : ''}${elementCountDelta} elements)`, confidence: 75 }
+      const newEls = after.elements.filter((ae: any) => !before.elements.some((be: any) => be.selector === ae.selector))
+      if (newEls.length >= 2) return { status: 'success', reason: `${newEls.length} new elements appeared`, confidence: 70 }
+      return { status: 'retry', reason: `Click on "${action.selector}" — no visible change detected`, confidence: 30 }
+    }
+    if (action.action === 'dom_type') {
+      const target = after.elements.find((e: any) => e.selector === action.selector)
+      if (target) return { status: 'success', reason: `Target element still present after typing`, confidence: 65 }
+      return { status: 'retry', reason: `Target "${action.selector}" not found after typing`, confidence: 20 }
+    }
+    return { status: 'success', reason: 'Action completed', confidence: 50 }
+  }
+
+  // ── Retry engine: exponential backoff ─────────────────
+  const MAX_RETRIES = 3
+  const RETRY_DELAYS = [1000, 2000, 4000]
+
+  // ── HITL: approve a queued task with verify-after-action loop ──
   const approveTask = async (id: string) => {
     const task = tasks.find(t => t.id === id)
     if (!task) return
 
-    // Immediately remove from queue visually
     setTasks(prev => prev.filter(t => t.id !== id))
 
     if (!isElectron) {
@@ -469,16 +553,50 @@ ${currentInput}`
       const isLive = proxyElementsRef.current.length > 0
 
       if (isLive && iframe?.contentWindow) {
-        // Execute the action for real on the proxied page via postMessage
-        if (task.action === 'dom_click') {
-          iframe.contentWindow.postMessage({ type: 'yogi-click', selector: task.payload?.selector }, '*')
-          setMessages(prev => [...prev, { role: 'agent', message: `🖱️ Clicked: ${task.payload?.selector}` }])
-        } else if (task.action === 'dom_type') {
-          iframe.contentWindow.postMessage({ type: 'yogi-type', selector: task.payload?.selector, value: task.payload?.value ?? '' }, '*')
-          setMessages(prev => [...prev, { role: 'agent', message: `⌨️ Typed into: ${task.payload?.selector}` }])
+        const beforeSnapshot = captureWebSnapshot()
+        logVerification(`▶ Executing: ${task.description}`)
+
+        let lastResult: { status: string; reason: string; confidence: number } = { status: 'retry', reason: '', confidence: 0 }
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          if (attempt > 0) {
+            logVerification(`🔄 Retry ${attempt}/${MAX_RETRIES} — waiting ${RETRY_DELAYS[attempt - 1]}ms...`)
+            await sleep(RETRY_DELAYS[attempt - 1])
+          }
+
+          if (task.action === 'dom_click') {
+            iframe.contentWindow!.postMessage({ type: 'yogi-click', selector: task.payload?.selector }, '*')
+          } else if (task.action === 'dom_type') {
+            iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: task.payload?.selector, value: task.payload?.value ?? '' }, '*')
+          }
+
+          await waitForWebStability()
+
+          const afterSnapshot = captureWebSnapshot()
+          lastResult = validateWebAction(
+            { action: task.action, selector: task.payload?.selector, value: task.payload?.value },
+            beforeSnapshot,
+            afterSnapshot
+          )
+
+          if (lastResult.status === 'success') {
+            logVerification(`✓ Verified: ${lastResult.reason} (confidence: ${lastResult.confidence}%)`)
+            setMessages(prev => [...prev, {
+              role: 'agent',
+              message: `✅ ${task.action === 'dom_click' ? 'Clicked' : 'Typed into'}: ${task.description}`
+            }])
+            return
+          }
+
+          logVerification(`✗ Verification failed: ${lastResult.reason}`)
         }
+
+        logVerification(`⚠ ESCALATE: ${lastResult.reason} — needs human help`)
+        setNotification({ message: `Action failed after ${MAX_RETRIES} retries: ${task.description}`, type: 'alert' })
+        setMessages(prev => [...prev, {
+          role: 'agent',
+          message: `⚠️ Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastResult.reason}`
+        }])
       } else {
-        // Mock page — just show confirmation
         const actionLabel = task.action === 'dom_type'
           ? `TYPE "${task.payload?.value?.slice(0, 40) ?? ''}" into ${task.payload?.selector}`
           : `CLICK ${task.payload?.selector}`
@@ -487,18 +605,102 @@ ${currentInput}`
       return
     }
 
+    // ── Electron mode: full verify-after-action loop ──────────
     try {
       if (task.action === 'dom_click' || task.action === 'dom_type') {
-        // Route through the fixed dom-action IPC handler → executes in webview
-        const result = await (window as any).yogi.domAction(
-          task.payload.selector,
-          task.action,
-          task.payload.value || ''
-        )
-        if (result.status === 'error') throw new Error(result.message)
+        logVerification(`▶ Capturing pre-action snapshot...`)
+        const beforeRes = await (window as any).yogi.captureSnapshot()
+        const beforeSnapshot = beforeRes.snapshot || { url: '', title: '', elements: [] }
+
+        const isSensitive = beforeSnapshot.elements.some((el: any) => {
+          if (el.selector !== task.payload?.selector) return false
+          const ctx = `${el.text} ${el.ariaLabel || ''} ${el.placeholder || ''} ${el.selector} ${el.type || ''}`.toLowerCase()
+          return el.type === 'password' || ['credit-card', 'card-number', 'cvv', 'delete', 'remove'].some(p => ctx.includes(p))
+        })
+        if (isSensitive) {
+          logVerification(`🛡 Sensitive action detected — requires manual confirmation`)
+          setNotification({ message: `Sensitive action: "${task.description}" — confirm manually`, type: 'alert' })
+          setTasks(prev => [{ ...task, id: task.id, sensitive: true }, ...prev])
+          return
+        }
+
+        let lastValidation: any = { status: 'retry', reason: 'Not executed', confidence: 0 }
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          if (attempt > 0) {
+            logVerification(`🔄 Retry ${attempt}/${MAX_RETRIES} — waiting ${RETRY_DELAYS[attempt - 1]}ms...`)
+            await sleep(RETRY_DELAYS[attempt - 1])
+          }
+
+          logVerification(`▶ Executing: ${task.description}`)
+          const result = await (window as any).yogi.domAction(
+            task.payload.selector,
+            task.action,
+            task.payload.value || ''
+          )
+          if (result.status === 'error') {
+            logVerification(`✗ DOM action error: ${result.message}`)
+            lastValidation = { status: 'retry', reason: result.message, confidence: 0 }
+            continue
+          }
+
+          logVerification(`⏳ Waiting for page to stabilize...`)
+          await (window as any).yogi.waitForStability(5000)
+
+          logVerification(`🔍 Validating action result...`)
+          const validation = await (window as any).yogi.validateAction(
+            { action: task.action, selector: task.payload.selector, value: task.payload.value, description: task.description },
+            beforeSnapshot
+          )
+
+          lastValidation = validation.validation
+
+          if (validation.captchaDetected) {
+            logVerification(`🛑 CAPTCHA detected — escalating to human`)
+            setNotification({ message: 'CAPTCHA detected! Please solve it manually, then retry.', type: 'alert' })
+            setMessages(prev => [...prev, { role: 'agent', message: `🛑 CAPTCHA detected — please solve it manually` }])
+            return
+          }
+
+          if (lastValidation.status === 'success') {
+            logVerification(`✓ Verified: ${lastValidation.reason} (confidence: ${lastValidation.confidence}%)`)
+            setMessages(prev => [...prev, {
+              role: 'agent',
+              message: `✅ ${task.action === 'dom_click' ? 'Clicked' : 'Typed into'}: ${task.description}`
+            }])
+
+            if (lastValidation.confidence < 50) {
+              logVerification(`📸 Low confidence — requesting visual verification...`)
+              try {
+                const screenshotRes = await (window as any).yogi.captureScreenshot()
+                if (screenshotRes.status === 'success' && screenshotRes.image) {
+                  const vision = await (window as any).yogi.analyzeScreenshot(
+                    screenshotRes.image,
+                    task.description,
+                    `The action "${task.description}" should have completed successfully`
+                  )
+                  if (vision.status === 'success' && vision.analysis) {
+                    logVerification(`👁 Visual: ${vision.analysis.description}`)
+                    if (vision.analysis.captchaDetected) {
+                      logVerification(`🛑 Vision detected CAPTCHA`)
+                      setNotification({ message: 'CAPTCHA detected visually! Please solve it.', type: 'alert' })
+                    }
+                  }
+                }
+              } catch (visionErr: any) {
+                logVerification(`👁 Vision unavailable: ${visionErr.message}`)
+              }
+            }
+            return
+          }
+
+          logVerification(`✗ Verification: ${lastValidation.reason}`)
+        }
+
+        logVerification(`⚠ ESCALATE: ${lastValidation.reason} — needs human help`)
+        setNotification({ message: `Action failed: ${task.description}`, type: 'alert' })
         setMessages(prev => [...prev, {
           role: 'agent',
-          message: `✅ ${task.action === 'dom_click' ? 'Clicked' : 'Typed into'}: ${task.description}`
+          message: `⚠️ Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastValidation.reason}`
         }])
       } else if (task.action === 'navigate') {
         const targetUrl = task.payload.url
@@ -507,15 +709,17 @@ ${currentInput}`
         }
         setUrl(targetUrl)
         setInputUrl(targetUrl)
+        logVerification(`✓ Navigated to: ${targetUrl}`)
         setMessages(prev => [...prev, { role: 'agent', message: `🌐 Navigating to: ${targetUrl}` }])
       } else if (task.action === 'execute') {
         const output = await (window as any).yogi.executeTerminal(task.payload.command)
+        logVerification(`✓ Terminal command executed`)
         setMessages(prev => [...prev, { role: 'agent', message: `💻 Terminal: ${output}` }])
       } else {
-        // Fallback for legacy action types
         await (window as any).yogi.humanInteraction(task.action, task.payload)
       }
     } catch (e: any) {
+      logVerification(`⚠ Error: ${e.message}`)
       setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Task Failed: ${e.message}` }])
     }
   }

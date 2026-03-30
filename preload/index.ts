@@ -52,6 +52,21 @@ const yogi = {
 
   parsePdf: (path: string) =>
     ipcRenderer.invoke('parse-pdf', { path }),
+
+  captureScreenshot: () =>
+    ipcRenderer.invoke('capture-screenshot'),
+
+  waitForStability: (timeoutMs?: number) =>
+    ipcRenderer.invoke('wait-for-stability', { timeoutMs: timeoutMs || 5000 }),
+
+  validateAction: (action: any, before: any) =>
+    ipcRenderer.invoke('validate-action', { action, before }),
+
+  analyzeScreenshot: (screenshotBase64: string, actionDescription?: string, expectedOutcome?: string) =>
+    ipcRenderer.invoke('analyze-screenshot', { screenshotBase64, actionDescription, expectedOutcome }),
+
+  captureSnapshot: () =>
+    ipcRenderer.invoke('capture-snapshot'),
 }
 
 // 🟢 THE FIX: Use both methods for maximum reliability
