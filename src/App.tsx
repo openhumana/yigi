@@ -749,11 +749,6 @@ ${currentInput}`
         const escMsg = `Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastResult.reason}`
         setNotification({ message: escMsg, type: 'alert' })
         setMessages(prev => [...prev, { role: 'agent', message: `⚠️ ${escMsg}` }])
-        if (autoPilotRef.current) {
-          setEscalation({ message: escMsg, taskId: task.id })
-          playEscalationChime()
-          fireNotification('Yogi needs your help', escMsg)
-        }
         return { status: 'escalated', retries: MAX_RETRIES, reason: lastResult.reason }
       } else {
         const actionLabel = task.action === 'dom_type'
@@ -839,11 +834,6 @@ ${currentInput}`
             const captchaMsg = 'CAPTCHA detected! Please solve it manually, then retry.'
             setNotification({ message: captchaMsg, type: 'alert' })
             setMessages(prev => [...prev, { role: 'agent', message: `🛑 CAPTCHA detected — please solve it manually` }])
-            if (autoPilotRef.current) {
-              setEscalation({ message: captchaMsg, taskId: task.id })
-              playEscalationChime()
-              fireNotification('Yogi needs your help', captchaMsg)
-            }
             return { status: 'escalated', retries: attempt, reason: 'CAPTCHA detected' }
           }
 
@@ -887,11 +877,6 @@ ${currentInput}`
         const escMsg2 = `Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastValidation.reason}`
         setNotification({ message: escMsg2, type: 'alert' })
         setMessages(prev => [...prev, { role: 'agent', message: `⚠️ ${escMsg2}` }])
-        if (autoPilotRef.current) {
-          setEscalation({ message: escMsg2, taskId: task.id })
-          playEscalationChime()
-          fireNotification('Yogi needs your help', escMsg2)
-        }
         return { status: 'escalated', retries: MAX_RETRIES, reason: lastValidation.reason }
       } else if (task.action === 'navigate') {
         const targetUrl = task.payload.url
