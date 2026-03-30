@@ -182,8 +182,14 @@ async function mockAIResponse(
     if (msgEl)     tasks.push({ action: 'dom_type',  description: 'Type the outreach message', payload: { selector: msgEl.selector, value: `[AI-generated outreach: ${userInput.slice(0, 40)}]` } })
     if (sendEl)    tasks.push({ action: 'dom_click', description: 'Click Send to deliver the message', payload: { selector: sendEl.selector } })
   } else if (lower.includes('search') || lower.includes('find')) {
-    const searchEl = elements.find(e => e.placeholder?.toLowerCase().includes('search') || e.selector.includes('search'))
-    if (searchEl) tasks.push({ action: 'dom_type', description: 'Type search query into the search bar', payload: { selector: searchEl.selector, value: userInput } })
+    const searchEl = elements.find(e =>
+      e.placeholder?.toLowerCase().includes('search') ||
+      e.selector.toLowerCase().includes('search') ||
+      e.ariaLabel?.toLowerCase().includes('search') ||
+      e.text?.toLowerCase().includes('search')
+    )
+    const typeable = searchEl || elements.find(e => e.tag === 'input' || e.tag === 'textarea')
+    if (typeable) tasks.push({ action: 'dom_type', description: 'Type search query into the search bar', payload: { selector: typeable.selector, value: userInput } })
   } else {
     // Generic fallback — pick first clickable, then first typeable
     const clickable = elements.find(e => e.tag === 'button' || e.tag === 'a')
@@ -554,6 +560,17 @@ const App = () => {
             ...t,
             id: `task-${Date.now()}-${i}`,
             confidence: typeof t.confidence === 'number' ? t.confidence : undefined,
+          })))
+        }
+      } else {
+        const mockElements = elements.length > 0 ? elements : mockBrowserState(workflow)
+        const mockRes = await mockAIResponse(prompt, workflow, mockElements)
+        responseText = mockRes.thought
+        setMessages(prev => [...prev, { role: 'agent', message: `[Mission] ${mockRes.thought}` }])
+        if (mockRes.tasks.length > 0) {
+          setTasks(mockRes.tasks.map((t: any, i: number) => ({
+            ...t,
+            id: `task-${Date.now()}-${i}`,
           })))
         }
       }
