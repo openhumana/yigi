@@ -425,7 +425,11 @@ const App = () => {
       totalChars += entryLen
     }
 
-    const content = budgetedSkills.map(s => `--- SKILL: ${s.name} ---\n${s.content}`).join('\n\n')
+    let content = budgetedSkills.map(s => `--- SKILL: ${s.name} ---\n${s.content}`).join('\n\n')
+
+    if (activeMission?.knowledgeBase) {
+      content = `--- MISSION KNOWLEDGE BASE: ${activeMission.name} ---\n${activeMission.knowledgeBase}\n\n${content}`
+    }
 
     if (isElectron) {
       (window as any).yogi.injectSkills(content)
@@ -498,6 +502,7 @@ const App = () => {
   useEffect(() => { taskQueueRef.current = tasks }, [tasks])
 
   const taskDrainResolversRef = useRef<Array<() => void>>([])
+  const lastAIResponseRef = useRef<string>('')
 
   useEffect(() => {
     if (tasks.length === 0 && taskDrainResolversRef.current.length > 0) {
@@ -508,12 +513,16 @@ const App = () => {
   }, [tasks])
 
   const missionRunner = useMissionRunner({
-    sendChat: async (prompt: string) => {
+    sendChat: async (prompt: string): Promise<string> => {
       setInput('')
       setMessages(prev => [...prev, { role: 'agent', message: `[Mission] ${prompt.slice(0, 100)}...` }])
+      let responseText = ''
       if (isElectron) {
         const res = await (window as any).yogi.sendChatMessage(prompt, 'high', workflow, settings)
-        if (res.text) setMessages(prev => [...prev, { role: 'agent', message: res.text }])
+        if (res.text) {
+          responseText = res.text
+          setMessages(prev => [...prev, { role: 'agent', message: res.text }])
+        }
         if (res.tasks?.length) {
           setTasks(res.tasks.map((t: any, i: number) => ({
             ...t,
@@ -522,6 +531,8 @@ const App = () => {
           })))
         }
       }
+      lastAIResponseRef.current = responseText
+      return responseText
     },
     addLog: (msg: string, type?: string) => {
       setThinkingLog(msg)
@@ -564,6 +575,7 @@ const App = () => {
         setTimeout(resolve, 60000)
       })
     },
+    getLastAIResponse: () => lastAIResponseRef.current,
   })
 
   const [resumeBanner, setResumeBanner] = useState<Mission | null>(null)

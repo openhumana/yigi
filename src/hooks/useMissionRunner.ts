@@ -10,7 +10,7 @@ interface BrowserElement {
 }
 
 interface RunnerCallbacks {
-  sendChat: (prompt: string) => Promise<void>
+  sendChat: (prompt: string) => Promise<string>
   addLog: (msg: string, type?: string) => void
   getBrowserUrl: () => string
   getBrowserElements: () => BrowserElement[]
@@ -20,6 +20,7 @@ interface RunnerCallbacks {
   onPaused: (mission: Mission) => void
   getTaskQueueLength: () => number
   waitForTaskQueueDrain: () => Promise<void>
+  getLastAIResponse: () => string
 }
 
 export function useMissionRunner(callbacks: RunnerCallbacks) {
@@ -160,6 +161,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
 
     if (config.source === 'previous_task' && config.previousTaskId) {
       const result = taskResultsRef.current[config.previousTaskId]
+        || missionRef.current?.taskOutputs?.[config.previousTaskId]
       if (result) {
         try {
           const parsed = JSON.parse(result)
@@ -174,6 +176,14 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
 
     return []
   }, [])
+
+  const captureTaskOutput = useCallback((taskId: string, output: string) => {
+    taskResultsRef.current[taskId] = output
+    updateMission(m => ({
+      ...m,
+      taskOutputs: { ...m.taskOutputs, [taskId]: output },
+    }))
+  }, [updateMission])
 
   const verifySuccessCriteria = useCallback((criteria: string): { met: boolean; reason: string } => {
     const url = callbacksRef.current.getBrowserUrl()
@@ -258,6 +268,9 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
         await waitForExecution()
         if (isAborted()) return false
 
+        const condOutput = callbacksRef.current.getLastAIResponse()
+        captureTaskOutput(task.id, condOutput)
+
         updateTask(task.id, { status: 'completed' })
         return true
       }
@@ -286,6 +299,11 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           await callbacksRef.current.sendChat(prompt)
           await waitForExecution()
           if (isAborted()) break
+
+          const iterOutput = callbacksRef.current.getLastAIResponse()
+          const prevOutput = taskResultsRef.current[task.id] || ''
+          captureTaskOutput(task.id, prevOutput ? `${prevOutput}\n${iterOutput}` : iterOutput)
+
           completedIterations = i + 1
         }
 
@@ -304,6 +322,8 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       await waitForExecution()
       if (isAborted()) return false
 
+      const aiResponse = callbacksRef.current.getLastAIResponse()
+
       if (task.successCriteria) {
         const verification = verifySuccessCriteria(task.successCriteria)
         callbacksRef.current.addLog(
@@ -311,23 +331,23 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           verification.met ? 'info' : 'alert'
         )
         if (!verification.met) {
-          taskResultsRef.current[task.id] = `Failed: ${verification.reason}`
+          captureTaskOutput(task.id, `Failed: ${verification.reason}`)
           updateTask(task.id, { status: 'failed', result: verification.reason })
           return false
         }
       }
 
-      taskResultsRef.current[task.id] = `Completed: ${task.description}`
+      captureTaskOutput(task.id, aiResponse || `Completed: ${task.description}`)
       updateTask(task.id, { status: 'completed' })
       return true
     } catch (err: any) {
       if (isAborted()) return false
       callbacksRef.current.addLog(`[Mission] Task failed: ${err.message || err}`, 'alert')
-      taskResultsRef.current[task.id] = `Error: ${err.message || String(err)}`
+      captureTaskOutput(task.id, `Error: ${err.message || String(err)}`)
       updateTask(task.id, { status: 'failed', result: err.message || String(err) })
       return false
     }
-  }, [evaluateCondition, resolveLoopItems, verifySuccessCriteria, updateTask, waitForExecution])
+  }, [evaluateCondition, resolveLoopItems, verifySuccessCriteria, captureTaskOutput, updateTask, waitForExecution])
 
   const runMissionLoop = useCallback(async () => {
     try {
@@ -443,7 +463,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
   const resumeMission = useCallback(async (mission?: Mission) => {
     if (mission && !missionRef.current) {
       abortRef.current = false
-      taskResultsRef.current = {}
+      taskResultsRef.current = { ...(mission.taskOutputs || {}) }
       missionRef.current = { ...mission, status: 'active', updatedAt: Date.now() }
       runningRef.current = true
       pausedRef.current = false
@@ -486,7 +506,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
   }
 }
 
-function buildTaskPrompt(task: MissionTask, loopItem?: string, loopIdx?: number, loopTotal?: number): string {
+function buildTaskPrompt(task: MissionTask, loopItem?: string, loopIdx?: number, loopTotal?: number, missionKB?: string): string {
   let prompt = task.description
 
   if (task.targetUrl) {

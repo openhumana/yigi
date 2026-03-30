@@ -136,17 +136,28 @@ Multi-step mission execution with loops, conditionals, and structured task depen
 ### Mission Task Types
 
 - **action**: Standard browser automation task (navigate, click, type)
-- **loop**: Repeats over a list (hardcoded items, CSS selector on page, or previous task output)
-- **conditional**: Branches based on URL patterns, element existence, or previous task status
+- **loop**: Repeats over a list (hardcoded items, CSS selector on page, or previous task output with task picker)
+- **conditional**: Branches based on URL patterns, element existence, or previous task status; supports thenTaskId/elseTaskId branch targets (configurable in editor)
+
+### Task Output Capture
+
+Every mission task captures the AI response as structured output, stored in both in-memory `taskResultsRef` and persisted `mission.taskOutputs`. This enables:
+- `previous_task` loop source: reads output from a selected prior task (JSON arrays or newline-split text)
+- Output survives mission pause/resume via persistence
+- `getLastAIResponse()` callback provides the most recent AI response to the runner
+
+### Per-Mission Knowledge Base
+
+Each mission has a `knowledgeBase` text field (editable in the Mission Editor) that is injected into the AI system prompt as `MISSION KNOWLEDGE BASE` whenever that mission is active. This allows users to provide mission-specific context (product info, personas, templates, guidelines) without creating separate skills.
 
 ### Skills System
 
 Skills are context documents injected into the AI system prompt when their activation triggers match:
 - **url_pattern**: Activates when the browser URL contains the pattern (e.g., "reddit.com")
 - **mission_type**: Activates during missions of a matching type
-- **manual**: Only activated explicitly
+- **manual**: Only activated explicitly (via Activate/Deactivate button in Skills Library)
 
-Skills are sorted by priority (higher = loaded first) and injected via `orchestrator.setActiveSkills()`.
+Skills are sorted by priority (higher = loaded first), token-budgeted (8000 char max), and injected via `orchestrator.setActiveSkills()`.
 
 ### Sidebar Panel Navigation
 

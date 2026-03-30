@@ -33,11 +33,13 @@ export interface Mission {
   id: string
   name: string
   description: string
+  knowledgeBase: string
   status: 'draft' | 'active' | 'paused' | 'completed'
   tasks: MissionTask[]
   currentTaskIndex: number
   completedTaskIds: string[]
   loopCounters: Record<string, number>
+  taskOutputs: Record<string, string>
   createdAt: number
   updatedAt: number
 }
@@ -77,11 +79,13 @@ export function createMission(partial?: Partial<Mission>): Mission {
     id: `mission-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: '',
     description: '',
+    knowledgeBase: '',
     status: 'draft',
     tasks: [],
     currentTaskIndex: 0,
     completedTaskIds: [],
     loopCounters: {},
+    taskOutputs: {},
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...partial,

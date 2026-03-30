@@ -144,6 +144,15 @@ const MissionEditor: React.FC<Props> = ({ missions, onSave, onDelete, onRun, onC
               rows={3}
             />
           </div>
+          <div className="mission-field">
+            <label>Knowledge Base (mission-specific context for AI)</label>
+            <textarea
+              value={editing.knowledgeBase || ''}
+              onChange={e => setEditing({ ...editing, knowledgeBase: e.target.value })}
+              placeholder="Add product info, personas, templates, guidelines, etc. This context is injected into every AI prompt during this mission."
+              rows={4}
+            />
+          </div>
 
           <div className="mission-tasks-header">
             <span>Tasks ({editing.tasks.length})</span>
@@ -271,37 +280,94 @@ const MissionEditor: React.FC<Props> = ({ missions, onSave, onDelete, onRun, onC
                             placeholder="CSS selector (e.g., .post-list a)"
                           />
                         )}
+                        {task.loopConfig?.source === 'previous_task' && (
+                          <select
+                            value={task.loopConfig?.previousTaskId || ''}
+                            onChange={e => updateTask(task.id, {
+                              loopConfig: { ...task.loopConfig!, previousTaskId: e.target.value || undefined }
+                            })}
+                          >
+                            <option value="">Select source task...</option>
+                            {editing.tasks.filter(t => t.id !== task.id).map(t => (
+                              <option key={t.id} value={t.id}>
+                                {editing.tasks.indexOf(t) + 1}. {t.description || 'Untitled'}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     )}
 
                     {task.type === 'conditional' && (
-                      <div className="mission-field">
-                        <label>Condition</label>
-                        <select
-                          value={task.conditionConfig?.type || 'element_exists'}
-                          onChange={e => updateTask(task.id, {
-                            conditionConfig: {
-                              ...task.conditionConfig,
-                              type: e.target.value as any,
-                              value: task.conditionConfig?.value || '',
-                            }
-                          })}
-                        >
-                          <option value="url_contains">URL contains</option>
-                          <option value="url_matches">URL matches pattern</option>
-                          <option value="element_exists">Element exists</option>
-                          <option value="text_contains">Page text contains</option>
-                          <option value="previous_task_status">Previous task status</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={task.conditionConfig?.value || ''}
-                          onChange={e => updateTask(task.id, {
-                            conditionConfig: { ...task.conditionConfig!, value: e.target.value }
-                          })}
-                          placeholder="Value to check"
-                        />
-                      </div>
+                      <>
+                        <div className="mission-field">
+                          <label>Condition</label>
+                          <select
+                            value={task.conditionConfig?.type || 'element_exists'}
+                            onChange={e => updateTask(task.id, {
+                              conditionConfig: {
+                                ...task.conditionConfig,
+                                type: e.target.value as any,
+                                value: task.conditionConfig?.value || '',
+                              }
+                            })}
+                          >
+                            <option value="url_contains">URL contains</option>
+                            <option value="url_matches">URL matches pattern</option>
+                            <option value="element_exists">Element exists</option>
+                            <option value="text_contains">Page text contains</option>
+                            <option value="previous_task_status">Previous task status</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={task.conditionConfig?.value || ''}
+                            onChange={e => updateTask(task.id, {
+                              conditionConfig: { ...task.conditionConfig!, value: e.target.value }
+                            })}
+                            placeholder="Value to check"
+                          />
+                        </div>
+                        <div className="mission-field-row">
+                          <div className="mission-field">
+                            <label>If True → Task</label>
+                            <select
+                              value={task.conditionConfig?.thenTaskId || ''}
+                              onChange={e => updateTask(task.id, {
+                                conditionConfig: {
+                                  ...task.conditionConfig!,
+                                  thenTaskId: e.target.value || undefined,
+                                }
+                              })}
+                            >
+                              <option value="">Continue (next task)</option>
+                              {editing.tasks.filter(t => t.id !== task.id).map((t, i) => (
+                                <option key={t.id} value={t.id}>
+                                  {editing.tasks.indexOf(t) + 1}. {t.description || 'Untitled'}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="mission-field">
+                            <label>If False → Task</label>
+                            <select
+                              value={task.conditionConfig?.elseTaskId || ''}
+                              onChange={e => updateTask(task.id, {
+                                conditionConfig: {
+                                  ...task.conditionConfig!,
+                                  elseTaskId: e.target.value || undefined,
+                                }
+                              })}
+                            >
+                              <option value="">Skip (no else-branch)</option>
+                              {editing.tasks.filter(t => t.id !== task.id).map((t, i) => (
+                                <option key={t.id} value={t.id}>
+                                  {editing.tasks.indexOf(t) + 1}. {t.description || 'Untitled'}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </>
                     )}
 
                     <div className="mission-field">
