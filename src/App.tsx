@@ -358,10 +358,13 @@ const PlanCard = ({ planId, tasks, onApprove, autoPilotOn }: {
               )}
             </div>
             <div className="plan-task-ctrl">
-              {(t.status == null || t.status === 'pending') && (
+              {(t.status == null || t.status === 'pending') && !autoPilotOn && (
                 <button type="button" className="approve-btn" onClick={() => onApprove(planId, t.id)}>
                   <ShieldCheck size={12} style={{ marginRight: 4 }} />Approve
                 </button>
+              )}
+              {(t.status == null || t.status === 'pending') && autoPilotOn && (
+                <span className="plan-badge queued">Queued</span>
               )}
               {t.status === 'running' && (
                 <span className="plan-badge running"><RotateCw size={11} className="spin" style={{ marginRight: 3 }} />Running</span>
@@ -380,13 +383,21 @@ const PlanCard = ({ planId, tasks, onApprove, autoPilotOn }: {
 // ──────────────────────────────────────────────
 // InlineErrorBlock: retry/problem notification
 // ──────────────────────────────────────────────
-const InlineErrorBlock = ({ what, retry }: { what: string; retry: string }) => (
+const InlineErrorBlock = ({ what, action, selector, retry }: {
+  what: string; action?: string; selector?: string; retry: string
+}) => (
   <div className="inline-error-block">
     <div className="inline-error-header">
       <AlertTriangle size={13} />
       <span>Problem encountered</span>
     </div>
     <div className="inline-error-what">{what}</div>
+    {(action || selector) && (
+      <div className="inline-error-context">
+        {action && <span className="inline-error-action">{action.replace('dom_', '').toUpperCase()}</span>}
+        {selector && <code className="inline-error-selector">{selector}</code>}
+      </div>
+    )}
     {retry && <div className="inline-error-retry">→ {retry}</div>}
   </div>
 )
@@ -1623,6 +1634,8 @@ ${currentInput}`
         id: `retry-${Date.now()}`,
         type: 'error',
         what: `"${task.description}" failed (attempt ${attempt}/${MAX_RETRIES})`,
+        action: task.action,
+        selector: task.payload?.selector,
         retry: reason,
       }])
     })
@@ -1728,6 +1741,8 @@ ${currentInput}`
             id: `retry-${Date.now()}`,
             type: 'error',
             what: `"${task.description}" failed (attempt ${attempt}/${MAX_RETRIES})`,
+            action: task.action,
+            selector: task.payload?.selector,
             retry: reason,
           }])
         })
@@ -2079,6 +2094,8 @@ ${currentInput}`
                     <InlineErrorBlock
                       key={m.id || i}
                       what={m.what || ''}
+                      action={m.action}
+                      selector={m.selector}
                       retry={m.retry || ''}
                     />
                   )

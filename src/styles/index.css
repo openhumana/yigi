@@ -2601,6 +2601,11 @@ body {
   color: var(--text-dim);
   border: 1px solid rgba(255,255,255,0.08);
 }
+.plan-badge.queued {
+  background: rgba(250,204,21,0.07);
+  color: rgba(250,204,21,0.6);
+  border: 1px solid rgba(250,204,21,0.14);
+}
 
 /* ══════════════════════════════════════════
    INLINE ERROR BLOCK
@@ -2638,6 +2643,37 @@ body {
   font-size: 11px;
   margin-top: 4px;
   font-style: italic;
+}
+
+.inline-error-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+.inline-error-action {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: rgba(239,68,68,0.15);
+  color: #f87171;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.inline-error-selector {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: rgba(248,113,113,0.7);
+  background: rgba(0,0,0,0.2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
 }
 
 /* ══════════════════════════════════════════
