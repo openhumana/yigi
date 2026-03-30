@@ -288,7 +288,7 @@ ipcMain.handle('get-quotas', () => {
 
 ipcMain.handle('get-settings', () => {
   const settings: Record<string, any> = {}
-  const keys = ['GOOGLE_KEYS', 'OPENAI_KEYS', 'GROQ_KEYS', 'MASTER_KB']
+  const keys = ['GOOGLE_KEYS', 'OPENAI_KEYS', 'GROQ_KEYS', 'MASTER_KB', 'MODEL_STRATEGY']
   // @ts-ignore
   keys.forEach(k => settings[k] = orchestrator.store.get(k) || '')
   return settings

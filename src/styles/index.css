@@ -199,6 +199,21 @@ body {
   color: var(--text);
 }
 
+/* Model badge shown inside agent bubble */
+.model-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #fff;
+  opacity: 0.85;
+  vertical-align: middle;
+  font-family: var(--mono);
+}
+
 /* Thinking bubble — pulsing border */
 .chat-bubble.thinking {
   cursor: pointer;
@@ -691,6 +706,33 @@ body {
 }
 .settings-field textarea:focus {
   border-color: rgba(82,134,255,0.4);
+}
+
+.settings-select {
+  background: #111114;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #e8f0ff;
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%235286ff'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px;
+}
+.settings-select:focus {
+  border-color: rgba(82,134,255,0.4);
+}
+.settings-select option {
+  background: #17171d;
+  color: #e8f0ff;
 }
 
 /* ══════════════════════════════════════════

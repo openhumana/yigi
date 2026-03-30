@@ -257,9 +257,21 @@ async function mockAIResponse(
 // ──────────────────────────────────────────────
 // Chat Bubble Component
 // ──────────────────────────────────────────────
-const ChatBubble = ({ message, role }: { message: string, role: 'agent' | 'user' }) => (
+const MODEL_BADGE_COLORS: Record<string, string> = {
+  'Gemini 1.5 Pro':   '#4285f4',
+  'Gemini 1.5 Flash': '#4285f4',
+  'Groq Llama 3.3':   '#f55036',
+  'GPT-4o':           '#10a37f',
+}
+
+const ChatBubble = ({ message, role, model }: { message: string, role: 'agent' | 'user', model?: string }) => (
   <div className={`chat-bubble ${role}`}>
     {message}
+    {role === 'agent' && model && (
+      <span className="model-badge" style={{ background: MODEL_BADGE_COLORS[model] || 'rgba(255,255,255,0.1)' }}>
+        {model}
+      </span>
+    )}
   </div>
 )
 
@@ -1039,7 +1051,7 @@ ${currentInput}`
         }
       }
 
-      setMessages(prev => [...prev, { role: 'agent', message: res.text || 'Done.' }])
+      setMessages(prev => [...prev, { role: 'agent', message: res.text || 'Done.', model: res.model || '' }])
 
       // ── QUEUE: populate HITL approval queue ────────────
       if (res.tasks && Array.isArray(res.tasks) && res.tasks.length > 0) {
@@ -1829,7 +1841,7 @@ ${currentInput}`
             {/* ── Chat feed ── */}
             <div className="chat-feed" ref={chatFeedRef}>
               {messages.map((m, i) => (
-                <ChatBubble key={i} message={m.message} role={m.role} />
+                <ChatBubble key={i} message={m.message} role={m.role} model={m.model} />
               ))}
 
               {isThinking && (
@@ -2026,13 +2038,27 @@ ${currentInput}`
                 />
               </div>
               <div className="settings-field">
-                <label>Google Gemini Keys (one per line)</label>
+                <label>Google Gemini API Key</label>
                 <textarea
                   rows={2}
                   value={settings.GOOGLE_KEYS || ''}
                   onChange={(e) => setSettings((s: any) => ({ ...s, GOOGLE_KEYS: e.target.value }))}
-                  placeholder="AIza..."
+                  placeholder="AIza... (get from Google AI Studio — aistudio.google.com)"
                 />
+              </div>
+              <div className="settings-field">
+                <label>Model Strategy</label>
+                <select
+                  value={settings.MODEL_STRATEGY || 'quality'}
+                  onChange={(e) => setSettings((s: any) => ({ ...s, MODEL_STRATEGY: e.target.value }))}
+                  className="settings-select"
+                >
+                  <option value="quality">Quality — Gemini 1.5 Pro for writing, Groq for execution</option>
+                  <option value="speed">Speed — Groq only (fastest, free)</option>
+                </select>
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                  Quality mode uses Gemini Pro for Reddit posts and planning. Requires a Gemini API key.
+                </div>
               </div>
               <div className="settings-field">
                 <label>OpenAI Keys (one per line)</label>

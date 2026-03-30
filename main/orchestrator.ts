@@ -18,6 +18,14 @@ interface ProviderPool {
   currentIndex: number
 }
 
+// Keywords that indicate a content/planning task where quality matters
+const CONTENT_KEYWORDS = [
+  'write', 'create', 'draft', 'post', 'plan', 'analyze', 'generate', 'reply',
+  'comment', 'suggest', 'think', 'help me', 'what should', 'how should',
+  'reddit', 'content', 'message', 'email', 'script', 'summarize', 'explain',
+  'research', 'find', 'search for', 'look for', 'compare',
+]
+
 class ModelOrchestrator {
   public store = new Store()
   private pools: Record<string, ProviderPool> = {}
@@ -68,11 +76,48 @@ class ModelOrchestrator {
     }
   }
 
+  /**
+   * Detect whether a prompt is a content/planning task (use Gemini Pro)
+   * vs a DOM execution task (use Groq for speed).
+   */
+  private isContentTask(prompt: string): boolean {
+    const lower = prompt.toLowerCase()
+    // If it looks like a DOM execution prompt with lots of selectors, prefer Groq
+    const hasDomSelectors = (prompt.match(/selector[s]?[:=]/gi) || []).length >= 2
+    if (hasDomSelectors) return false
+    return CONTENT_KEYWORDS.some(kw => lower.includes(kw))
+  }
+
+  /**
+   * Returns the pool order to use based on model strategy and task type.
+   * 'quality': Gemini Pro first for content tasks, Groq first for DOM tasks
+   * 'speed': Groq always first
+   */
+  private getPoolOrder(prompt: string): string[] {
+    const strategy = (this.store.get('MODEL_STRATEGY') as string) || 'quality'
+    if (strategy === 'quality' && this.isContentTask(prompt)) {
+      return ['google', 'groq', 'openai']
+    }
+    return ['groq', 'google', 'openai']
+  }
+
+  /**
+   * Returns the human-readable model display name for a given pool.
+   */
+  private getModelDisplayName(poolName: string): string {
+    const strategy = (this.store.get('MODEL_STRATEGY') as string) || 'quality'
+    if (poolName === 'groq') return 'Groq Llama 3.3'
+    if (poolName === 'google') return strategy === 'quality' ? 'Gemini 1.5 Pro' : 'Gemini 1.5 Flash'
+    if (poolName === 'openai') return 'GPT-4o'
+    return poolName
+  }
+
   public async process(prompt: string, tier: 'high' | 'low' = 'high', workflow?: string, keys?: any, onLog?: (msg: string) => void): Promise<any> {
     console.log(`\n[IPC] IPC Received Prompt: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`)
 
-    const poolNames = ['groq', 'google', 'openai']
+    const poolNames = this.getPoolOrder(prompt)
     let lastError = null
+    let usedModel = ''
 
     if (onLog) onLog('🔍 Analyzing request...')
 
@@ -88,16 +133,18 @@ class ModelOrchestrator {
           continue
         }
 
-        if (poolName !== 'groq' && lastError && onLog) {
+        if (poolName !== poolNames[0] && lastError && onLog) {
           onLog(`🔄 Fallback Triggered: Moving to ${poolName.toUpperCase()}...`)
         }
 
-        if (onLog) onLog(`🧠 Using Vault: ${poolName} (Key ${pool.currentIndex})`)
+        const displayName = this.getModelDisplayName(poolName)
+        if (onLog) onLog(`🧠 Using ${displayName}...`)
         try {
           if (onLog) onLog('✨ Generating plan...')
           const response = await this.invokeInstance(instance, poolName, prompt, workflow, onLog)
           instance.usageCount++
-          return response
+          usedModel = displayName
+          return { ...response, model: displayName }
         } catch (error: any) {
           console.error(`[Vault Error] Key ${instance.id} failed:`, error.message)
           if (onLog) onLog(`❌ Signal Failed: ${error.message}`)
@@ -116,18 +163,22 @@ class ModelOrchestrator {
 
     return {
       text: lastError ? `⚠️ Error: ${lastError.message}` : '⚠️ No AI providers available. Please add API keys in Settings.',
-      tasks: null
+      tasks: null,
+      model: '',
     }
   }
 
   private async invokeInstance(instance: KeyInstance, poolName: string, prompt: string, workflow?: string, onLog?: (msg: string) => void) {
     let model: any
-    const modelConfig = { apiKey: instance.key, temperature: 0.1 }
+    const strategy = (this.store.get('MODEL_STRATEGY') as string) || 'quality'
 
     if (poolName === 'groq') {
-      model = new ChatGroq({ ...modelConfig, model: 'llama-3.3-70b-versatile' })
+      model = new ChatGroq({ apiKey: instance.key, model: 'llama-3.3-70b-versatile', temperature: 0.1 })
     } else if (poolName === 'google') {
-      model = new ChatGoogleGenerativeAI({ apiKey: instance.key, modelName: 'gemini-1.5-flash', temperature: 0.1 })
+      // Use Gemini 1.5 Pro for quality strategy, Flash for speed
+      const modelName = strategy === 'quality' ? 'gemini-1.5-pro' : 'gemini-1.5-flash'
+      const temperature = strategy === 'quality' ? 0.3 : 0.1
+      model = new ChatGoogleGenerativeAI({ apiKey: instance.key, modelName, temperature })
     } else {
       model = new ChatOpenAI({ openAIApiKey: instance.key, modelName: 'gpt-4o', temperature: 0.1 })
     }
@@ -145,7 +196,7 @@ class ModelOrchestrator {
       const isGroq = poolName === 'groq'
       if (onLog) onLog(isGroq ? '🚀 GROQ SIGNAL: Fast-tracking...' : '📡 AI SIGNAL: Sending...')
 
-      const timeoutMs = isGroq ? 12000 : 25000
+      const timeoutMs = isGroq ? 12000 : 30000
       const responsePromise = model.invoke(messages)
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`Timeout after ${timeoutMs / 1000}s`)), timeoutMs)
@@ -154,7 +205,6 @@ class ModelOrchestrator {
       const response = await Promise.race([responsePromise, timeoutPromise]) as any
       const rawText = response.content as string
 
-      // Robust extraction — handles spaces/newlines after ```json fence
       const tasks = this.extractTasks(rawText)
       const uiMessage = this.extractThought(rawText)
 
@@ -181,33 +231,21 @@ class ModelOrchestrator {
     }
   }
 
-  /**
-   * Extract the user-visible "thought" string from the model's response.
-   * Only shows the thought field — never raw JSON.
-   */
   private extractThought(text: string): string {
-    // Match ```json (with optional spaces/newlines) ... ``` robustly
     const match = text.match(/```json\s*([\s\S]*?)```/)
     if (match) {
       try {
         const parsed = JSON.parse(match[1].trim())
         if (parsed.thought) return parsed.thought
-        // If JSON parsed but no thought, show nothing sensitive
         return 'Processing your request...'
       } catch (e) {
-        // JSON parse failed — strip the raw block, show any text before it
         const before = text.split('```json')[0].trim()
         return before || 'Processing your request...'
       }
     }
-    // No JSON block at all — show the full response as a chat message
     return text.trim()
   }
 
-  /**
-   * Extract the tasks array from the model's JSON response.
-   * Handles ```json fences with or without trailing whitespace/newlines.
-   */
   private extractTasks(text: string): any[] | null {
     try {
       const match = text.match(/```json\s*([\s\S]*?)```/)
@@ -305,6 +343,7 @@ STRICT RESPONSE FORMAT — output ONLY this, nothing else:
   }
 
   public async validateWithLLM(action: any, before: any, after: any): Promise<{ status: 'success' | 'retry' | 'escalate'; reason: string; confidence: number } | null> {
+    // Use Groq first for validation — speed matters more than quality here
     const poolNames = ['groq', 'google', 'openai']
 
     const prompt = `You are validating whether a browser automation action succeeded.
