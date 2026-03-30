@@ -122,7 +122,7 @@ ipcMain.handle('get-browser-state', async () => {
     const allWc = webContents.getAllWebContents()
     const webview = allWc.find((wc: any) => wc.getType() === 'webview')
 
-    if (!webview) return { status: 'error', message: 'Webview not attached yet' }
+    if (!webview) return { status: 'error', message: 'Webview not attached yet', elements: [] }
 
     const elements = await webview.executeJavaScript(`
       (() => {
@@ -130,14 +130,14 @@ ipcMain.handle('get-browser-state', async () => {
           'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="menuitem"]'
         ));
         return nodes.slice(0, 60).map(el => {
-          // Robust selector priority chain
+          // Robust selector priority chain: #id → [name] → [data-testid] → [aria-label] → [placeholder] → tag
           let selector = '';
           if (el.id) {
             selector = '#' + el.id;
-          } else if (el.getAttribute('data-testid')) {
-            selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
           } else if (el.getAttribute('name')) {
             selector = el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
+          } else if (el.getAttribute('data-testid')) {
+            selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
           } else if (el.getAttribute('aria-label')) {
             selector = el.tagName.toLowerCase() + '[aria-label="' + el.getAttribute('aria-label') + '"]';
           } else if (el.placeholder) {
@@ -159,7 +159,7 @@ ipcMain.handle('get-browser-state', async () => {
     return { status: 'success', elements }
   } catch (error: any) {
     console.error('[Main] get-browser-state failed:', error.message)
-    return { status: 'error', message: error.message }
+    return { status: 'error', message: error.message, elements: [] }
   }
 })
 
