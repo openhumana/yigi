@@ -68,16 +68,24 @@ const SAFETY_PATTERNS = [
 ]
 
 function isSafetyRailTask(task: any, elements: any[]): string | null {
-  const sel = task.payload?.selector
-  const matchEl = elements.find((e: any) => e.selector === sel)
-  if (!matchEl) return null
-
-  const ctx = `${matchEl.text || ''} ${matchEl.ariaLabel || ''} ${matchEl.placeholder || ''} ${matchEl.selector || ''} ${matchEl.type || ''}`.toLowerCase()
-
+  const taskCtx = `${task.description || ''} ${task.payload?.selector || ''} ${task.payload?.value || ''}`.toLowerCase()
   for (const pattern of SAFETY_PATTERNS) {
     for (const val of pattern.values) {
-      if (ctx.includes(val.toLowerCase())) {
-        return `Safety rail: contains "${val}" — requires manual approval`
+      if (taskCtx.includes(val.toLowerCase())) {
+        return `Safety rail: "${val}" detected in task — requires manual approval`
+      }
+    }
+  }
+
+  const sel = task.payload?.selector
+  const matchEl = elements.find((e: any) => e.selector === sel)
+  if (matchEl) {
+    const ctx = `${matchEl.text || ''} ${matchEl.ariaLabel || ''} ${matchEl.placeholder || ''} ${matchEl.selector || ''} ${matchEl.type || ''}`.toLowerCase()
+    for (const pattern of SAFETY_PATTERNS) {
+      for (const val of pattern.values) {
+        if (ctx.includes(val.toLowerCase())) {
+          return `Safety rail: element contains "${val}" — requires manual approval`
+        }
       }
     }
   }
@@ -678,11 +686,16 @@ ${currentInput}`
 
   type ApproveResult = { status: 'success' | 'escalated' | 'error'; retries?: number; reason?: string }
 
-  const approveTask = async (id: string): Promise<ApproveResult> => {
-    const task = tasks.find(t => t.id === id)
-    if (!task) return { status: 'error', reason: 'Task not found' }
+  const approveTask = async (idOrTask: string | any): Promise<ApproveResult> => {
+    let task: any
+    if (typeof idOrTask === 'string') {
+      task = tasks.find(t => t.id === idOrTask)
+      if (!task) return { status: 'error', reason: 'Task not found' }
+    } else {
+      task = idOrTask
+    }
 
-    setTasks(prev => prev.filter(t => t.id !== id))
+    setTasks(prev => prev.filter(t => t.id !== task.id))
 
     if (!isElectron) {
       const iframe = webviewRef.current as HTMLIFrameElement | null
@@ -910,18 +923,18 @@ ${currentInput}`
     const stepDelay = settings.autoStepDelay || 2000
     const confThreshold = settings.confidenceThreshold ?? 70
 
-    let currentElements: any[] = proxyElementsRef.current
-    if (isElectron) {
-      try {
-        const state = await (window as any).yogi.getBrowserState()
-        if (state?.status === 'success' && state.elements) currentElements = state.elements
-      } catch (e) {}
-    }
-
     for (let i = 0; i < taskQueue.length; i++) {
       if (!autoPilotRef.current) {
         addExecLog({ action: 'pause', description: 'Auto-Pilot turned OFF — paused', status: 'skipped' })
         break
+      }
+
+      let currentElements: any[] = proxyElementsRef.current
+      if (isElectron) {
+        try {
+          const state = await (window as any).yogi.getBrowserState()
+          if (state?.status === 'success' && state.elements) currentElements = state.elements
+        } catch (e) {}
       }
 
       const task = taskQueue[i]
@@ -974,7 +987,7 @@ ${currentInput}`
 
       let result: ApproveResult
       try {
-        result = await approveTask(task.id)
+        result = await approveTask(task)
       } catch (e: any) {
         result = { status: 'error', reason: e.message }
       }
