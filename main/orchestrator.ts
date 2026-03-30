@@ -33,7 +33,7 @@ class ModelOrchestrator {
     this.initPool('groq', 'GROQ_KEYS', (key) => new ChatGroq({
       model: 'llama-3.3-70b-versatile',
       apiKey: key,
-      temperature: 0.1, // Lower temperature for more reliable JSON
+      temperature: 0.1,
     }))
 
     this.initPool('google', 'GOOGLE_KEYS', (key) => new ChatGoogleGenerativeAI({
@@ -115,7 +115,7 @@ class ModelOrchestrator {
     }
 
     return {
-      text: lastError ? `⚠️ Error: ${lastError.message}` : '⚠️ No AI providers available.',
+      text: lastError ? `⚠️ Error: ${lastError.message}` : '⚠️ No AI providers available. Please add API keys in Settings.',
       tasks: null
     }
   }
@@ -137,7 +137,7 @@ class ModelOrchestrator {
 
     const messages = [
       new SystemMessage(this.getSystemPrompt(workflow) + learningContext),
-      ...this.history.slice(-6), // Keep context short for speed
+      ...this.history.slice(-6),
       new HumanMessage(prompt),
     ]
 
@@ -154,23 +154,9 @@ class ModelOrchestrator {
       const response = await Promise.race([responsePromise, timeoutPromise]) as any
       const rawText = response.content as string
 
-      // --- MAGIC EXTRACTION LOGIC ---
+      // Robust extraction — handles spaces/newlines after ```json fence
       const tasks = this.extractTasks(rawText)
-      let uiMessage = ""
-
-      // 1. Try to find the "thought" inside the JSON
-      const jsonMatch = rawText.match(/```json\n([\s\S]*?)\n```/)
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[1])
-          uiMessage = parsed.thought || "Executing your request..."
-        } catch (e) {
-          uiMessage = rawText.split('```json')[0].trim()
-        }
-      } else {
-        // Fallback: If no JSON, just show the text but log that no tasks were found
-        uiMessage = rawText.trim()
-      }
+      const uiMessage = this.extractThought(rawText)
 
       if (onLog) onLog('📦 Done!')
       this.history.push(new HumanMessage(prompt))
@@ -190,55 +176,82 @@ class ModelOrchestrator {
     }
   }
 
+  /**
+   * Extract the user-visible "thought" string from the model's response.
+   * Only shows the thought field — never raw JSON.
+   */
+  private extractThought(text: string): string {
+    // Match ```json (with optional spaces/newlines) ... ``` robustly
+    const match = text.match(/```json\s*([\s\S]*?)```/)
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[1].trim())
+        if (parsed.thought) return parsed.thought
+        // If JSON parsed but no thought, show nothing sensitive
+        return 'Processing your request...'
+      } catch (e) {
+        // JSON parse failed — strip the raw block, show any text before it
+        const before = text.split('```json')[0].trim()
+        return before || 'Processing your request...'
+      }
+    }
+    // No JSON block at all — show the full response as a chat message
+    return text.trim()
+  }
+
+  /**
+   * Extract the tasks array from the model's JSON response.
+   * Handles ```json fences with or without trailing whitespace/newlines.
+   */
+  private extractTasks(text: string): any[] | null {
+    try {
+      const match = text.match(/```json\s*([\s\S]*?)```/)
+      if (match) {
+        const parsed = JSON.parse(match[1].trim())
+        return Array.isArray(parsed.tasks) && parsed.tasks.length > 0 ? parsed.tasks : null
+      }
+    } catch (e) {
+      console.error('[Orchestrator] extractTasks parse error:', e)
+    }
+    return null
+  }
+
   private getSystemPrompt(workflow?: string): string {
     const masterKB = this.store.get('MASTER_KB') as string || ''
 
     return `You are Yogi, an Actionable Sales Automation Agent for Open Humana.
-    Your goal is to act like "Replit Agent": The user gives an English command, and you translate it into browser actions.
+Your goal is to act like "Replit Agent": the user gives an English command, and you translate it into browser DOM actions.
 
-    WORKFLOW: ${workflow || 'General'}
-    KNOWLEDGE BASE: ${masterKB}
+WORKFLOW: ${workflow || 'General'}
+KNOWLEDGE BASE: ${masterKB || '(none yet — upload a PDF in Settings)'}
 
-    OPERATING PROTOCOL:
-    1. Analyze the user's English request.
-    2. Formulate a plan using the tools below.
-    3. ALWAYS respond with a JSON block.
-    4. Hide the JSON inside markdown.
-    5. The "thought" field in your JSON should be a friendly English summary of what you are doing.
+OPERATING PROTOCOL:
+1. The user's message will include a BROWSER CONTEXT block listing interactive elements and their CSS selectors.
+2. Use those selectors to build precise dom_click or dom_type tasks.
+3. ALWAYS respond with EXACTLY ONE \`\`\`json code block — no other text outside it.
+4. The "thought" field is the ONLY thing shown to the user — keep it friendly and concise (one sentence).
+5. Never include raw JSON outside the code fence. Never include explanations outside the code fence.
 
-    AVAILABLE TOOLS:
-    - dom_click: { "selector": "CSS_SELECTOR" }
-    - dom_type: { "selector": "CSS_SELECTOR", "value": "text" }
-    - navigate: { "url": "URL" }
-    - execute: { "command": "TERMINAL_COMMAND" }
+AVAILABLE ACTIONS:
+- dom_click: clicks an element  →  payload: { "selector": "CSS_SELECTOR" }
+- dom_type: types into an element  →  payload: { "selector": "CSS_SELECTOR", "value": "text to type" }
+- navigate: loads a URL  →  payload: { "url": "https://..." }
+- execute: runs a sandboxed terminal command  →  payload: { "command": "cmd" }
 
-    RESPONSE FORMAT:
-    \`\`\`json
+STRICT RESPONSE FORMAT — output ONLY this, nothing else:
+\`\`\`json
+{
+  "thought": "One friendly sentence describing what you are about to do.",
+  "tasks": [
     {
-      "thought": "Friendly English explanation of the action.",
-      "tasks": [
-        {
-          "id": "unique_id",
-          "action": "dom_click | dom_type | navigate | execute",
-          "description": "Short label for the button/action",
-          "payload": { ... }
-        }
-      ]
+      "id": "t1",
+      "action": "dom_click",
+      "description": "Short human-readable label",
+      "payload": { "selector": "#submit-btn" }
     }
-    \`\`\``
-  }
-
-  private extractTasks(text: string): any[] | null {
-    try {
-      const match = text.match(/```json\n([\s\S]*?)\n```/)
-      if (match) {
-        const parsed = JSON.parse(match[1])
-        return Array.isArray(parsed.tasks) ? parsed.tasks : null
-      }
-    } catch (e) {
-      return null
-    }
-    return null
+  ]
+}
+\`\`\``
   }
 
   public getQuotas() {

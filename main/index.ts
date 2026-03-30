@@ -7,26 +7,14 @@ import { orchestrator } from './orchestrator'
 import { sandbox } from './sandbox'
 import { humanInteraction } from './human_interaction'
 
-// The built directory structure
-//
-// ├─┬ dist-electron
-// │ ├─┬ main
-// │ │ └── index.js    > Electron Main process
-// │ └─┬ preload
-// │   └── index.js    > Electron Preload process
-// ├─┬ dist
-// │ └── index.html    > Renderer process
-//
 process.env.DIST_ELECTRON = join(__dirname, '../')
 process.env.DIST = join(process.env.DIST_ELECTRON, '../dist')
 process.env.PUBLIC = process.env.VITE_DEV_SERVER_URL
   ? join(process.env.DIST_ELECTRON, '../public')
   : process.env.DIST
 
-// Disable GPU Acceleration for Windows 7
 if (release().startsWith('6.1')) app.disableHardwareAcceleration()
 
-// Set application name for Windows 10+ notifications
 if (process.platform === 'win32') app.setAppUserModelId(app.getName())
 
 if (!app.requestSingleInstanceLock()) {
@@ -35,9 +23,6 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win: BrowserWindow | null = null
-// Robust pathing for the preload script
-// In dev mode: __dirname = dist-electron/main, preload is at dist-electron/preload/index.js
-// In prod mode: __dirname = dist-electron/main, preload is at dist-electron/preload/index.js
 const preloadPath = join(__dirname, '../preload/index.js')
 
 const url = process.env.VITE_DEV_SERVER_URL
@@ -65,10 +50,6 @@ async function createWindow() {
   if (url) {
     console.log(`[Main] Connecting to Dev Server: ${url}`)
     win.loadURL(url)
-
-    // win.webContents.openDevTools()
-
-    // Log if the load fails
     win.webContents.on('did-fail-load', (e, errorCode, errorDescription) => {
       console.error(`[Main] Failed to load URL: ${errorCode} - ${errorDescription}`)
     })
@@ -76,12 +57,10 @@ async function createWindow() {
     win.loadFile(indexHtml)
   }
 
-  // Test directly communication from Main process
   win.webContents.on('did-finish-load', () => {
     win?.webContents.send('main-process-message', new Date().toLocaleString())
   })
 
-  // Make all links open with the browser, not with the application
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https:')) shell.openExternal(url)
     return { action: 'deny' }
@@ -97,7 +76,6 @@ app.on('window-all-closed', () => {
 
 app.on('second-instance', () => {
   if (win) {
-    // Focus on the main window if the user tried to open another
     if (win.isMinimized()) win.restore()
     win.focus()
   }
@@ -113,17 +91,13 @@ app.on('activate', () => {
 })
 
 // ──────────────────────────────────────────────
-// Yogi: Model & Sandbox IPC Listeners
+// Yogi: IPC Handlers
 // ──────────────────────────────────────────────
 
 ipcMain.handle('connect-browser', async () => {
   try {
     console.log('[Main] Launching Browser Session...')
-    // In a real scenario, this might connect to a remote debugging port
-    // or simply reload the internal webview context.
-    // For now, we simulate a successful connection.
     await new Promise(resolve => setTimeout(resolve, 1500))
-
     return { status: 'success', message: 'Browser Connected' }
   } catch (error: any) {
     console.error('[Main] Browser Launch Failed:', error)
@@ -140,100 +114,100 @@ ipcMain.handle('ai-request', async (_, { prompt, tier, workflow, keys }) => {
 ipcMain.handle('terminal-exec', async (_, { command }) => {
   return await sandbox.execute(command)
 })
-// --- NEW DOM EXECUTION BRIDGE ---
-ipcMain.handle('dom-action', async (event, { selector, action, value }) => {
-  if (!win) return { status: 'error', message: 'No active window' };
 
-  try {
-    let script = '';
-
-    if (action === 'dom_click') {
-      script = `
-        (function() {
-          const el = document.querySelector("${selector}");
-          if (el) { el.click(); return true; }
-          return false;
-        })();
-      `;
-    } else if (action === 'dom_type') {
-      script = `
-        (function() {
-          const el = document.querySelector("${selector}");
-          if (el) { 
-            el.value = \`${value}\`; 
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true; 
-          }
-          return false;
-        })();
-      `;
-    }
-
-    const success = await win.webContents.executeJavaScript(script);
-    if (!success) throw new Error(`Could not find element on page: ${selector}`);
-
-    return { status: 'success' };
-  } catch (error) {
-    console.error("DOM Action Failed:", error);
-    return { status: 'error', message: error.message };
-  }
-});
-
+// ── EYES: Scan the webview for interactive elements ──────────────────────────
 ipcMain.handle('get-browser-state', async () => {
   try {
     const { webContents } = require('electron')
     const allWc = webContents.getAllWebContents()
-    const webview = allWc.find(wc => wc.getType() === 'webview')
+    const webview = allWc.find((wc: any) => wc.getType() === 'webview')
 
-    if (!webview) return { status: 'error', message: 'Webview not found' }
+    if (!webview) return { status: 'error', message: 'Webview not attached yet' }
 
     const elements = await webview.executeJavaScript(`
-            (() => {
-                const interactables = Array.from(document.querySelectorAll('button, a, input, textarea, [role="button"]'))
-                return interactables.map(el => ({
-                    tag: el.tagName.toLowerCase(),
-                    text: el.innerText?.slice(0, 30) || '',
-                    id: el.id || '',
-                    name: el.name || '',
-                    placeholder: el.placeholder || '',
-                    ariaLabel: el.getAttribute('aria-label') || '',
-                    selector: el.id ? '#' + el.id : el.className ? (el.tagName.toLowerCase() + '.' + el.className.split(' ').join('.')) : el.tagName.toLowerCase()
-                })).slice(0, 50) 
-            })()
-        `)
+      (() => {
+        const nodes = Array.from(document.querySelectorAll(
+          'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="menuitem"]'
+        ));
+        return nodes.slice(0, 60).map(el => {
+          // Robust selector priority chain
+          let selector = '';
+          if (el.id) {
+            selector = '#' + el.id;
+          } else if (el.getAttribute('data-testid')) {
+            selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
+          } else if (el.getAttribute('name')) {
+            selector = el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
+          } else if (el.getAttribute('aria-label')) {
+            selector = el.tagName.toLowerCase() + '[aria-label="' + el.getAttribute('aria-label') + '"]';
+          } else if (el.placeholder) {
+            selector = el.tagName.toLowerCase() + '[placeholder="' + el.placeholder + '"]';
+          } else {
+            selector = el.tagName.toLowerCase();
+          }
+          return {
+            tag: el.tagName.toLowerCase(),
+            text: (el.innerText || el.value || '').trim().slice(0, 40),
+            selector: selector,
+            ariaLabel: el.getAttribute('aria-label') || '',
+            placeholder: el.placeholder || '',
+            type: el.type || '',
+          };
+        });
+      })()
+    `)
     return { status: 'success', elements }
   } catch (error: any) {
+    console.error('[Main] get-browser-state failed:', error.message)
     return { status: 'error', message: error.message }
   }
 })
 
+// ── HANDS: Execute a DOM action inside the webview ───────────────────────────
 ipcMain.handle('dom-action', async (_, { selector, action, value }) => {
   try {
     const { webContents } = require('electron')
     const allWc = webContents.getAllWebContents()
-    const webview = allWc.find(wc => wc.getType() === 'webview')
+    const webview = allWc.find((wc: any) => wc.getType() === 'webview')
 
-    if (!webview) return { status: 'error', message: 'Webview not found' }
+    if (!webview) return { status: 'error', message: 'Webview not attached yet' }
 
-    await webview.executeJavaScript(\`
-            (() => {
-                const el = document.querySelector("\${selector}");
-                if (!el) throw new Error("Selector not found: " + "\${selector}");
-                if ("\${action}" === 'click') {
-                   el.click();
-                } else if ("\${action}" === 'type') {
-                   el.focus();
-                   el.value = "\${value}";
-                   el.dispatchEvent(new Event('input', { bubbles: true }));
-                   el.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            })()
-        \`)
-        return { status: 'success' }
-    } catch (error: any) {
-        return { status: 'error', message: error.message }
+    const safeSelector = String(selector).replace(/"/g, '\\"')
+    const safeValue = String(value || '').replace(/`/g, '\\`').replace(/\\/g, '\\\\')
+
+    if (action === 'dom_click') {
+      const script = `
+        (() => {
+          const el = document.querySelector("${safeSelector}");
+          if (!el) throw new Error("Selector not found: ${safeSelector}");
+          el.focus();
+          el.click();
+          return true;
+        })()
+      `
+      await webview.executeJavaScript(script)
+    } else if (action === 'dom_type') {
+      const script = `
+        (() => {
+          const el = document.querySelector("${safeSelector}");
+          if (!el) throw new Error("Selector not found: ${safeSelector}");
+          el.focus();
+          el.value = \`${safeValue}\`;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        })()
+      `
+      await webview.executeJavaScript(script)
+    } else {
+      return { status: 'error', message: `Unknown action: ${action}` }
     }
+
+    return { status: 'success' }
+  } catch (error: any) {
+    console.error('[Main] dom-action failed:', error.message)
+    return { status: 'error', message: error.message }
+  }
 })
 
 ipcMain.handle('get-quotas', () => {
@@ -250,7 +224,6 @@ ipcMain.handle('get-settings', () => {
 
 ipcMain.handle('parse-pdf', async (_, { path }) => {
   try {
-    // 🟢 LAZY LOAD: Prevents the library from crashing on startup
     const pdf = require('pdf-parse')
     const dataBuffer = fs.readFileSync(path)
     const data = await pdf(dataBuffer)
@@ -266,7 +239,6 @@ ipcMain.handle('save-settings', (_, settings) => {
     // @ts-ignore
     orchestrator.store.set(k, v)
   })
-  // Re-init providers with new multi-key pools
   orchestrator.initProviders()
   return { status: 'success' }
 })
