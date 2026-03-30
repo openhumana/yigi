@@ -4,6 +4,7 @@ import { Mission, Skill } from './types/mission'
 import { DEFAULT_SKILLS } from './data/skills'
 import MissionEditor from './components/MissionEditor'
 import SkillsLibrary from './components/SkillsLibrary'
+import OnboardingScreen from './components/OnboardingScreen'
 import { useMissionRunner } from './hooks/useMissionRunner'
 
 // Detect Electron environment (window.yogi is exposed by the preload bridge)
@@ -256,6 +257,7 @@ const App = () => {
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<any>({})
   const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   const [autoPilot, setAutoPilot] = useState(false)
   const autoPilotRef = useRef(false)
@@ -359,6 +361,8 @@ const App = () => {
       if (isElectron) {
         const res = await (window as any).yogi.getSettings()
         setSettings(res)
+        const hasKeys = !!(res.GROQ_KEYS || res.OPENAI_KEYS || res.GOOGLE_KEYS)
+        if (!hasKeys) setShowOnboarding(true)
       } else {
         const saved = localStorage.getItem('yogi_settings')
         if (saved) setSettings(JSON.parse(saved))
@@ -366,6 +370,17 @@ const App = () => {
     }
     loadSettings()
   }, [])
+
+  const handleOnboardingComplete = useCallback(async (newSettings: any) => {
+    if (Object.keys(newSettings).length > 0) {
+      const merged = { ...settings, ...newSettings }
+      setSettings(merged)
+      if (isElectron) {
+        await (window as any).yogi.saveSettings(merged)
+      }
+    }
+    setShowOnboarding(false)
+  }, [settings])
 
   const saveMissions = useCallback(async (missionList: Mission[]) => {
     setMissions(missionList)
@@ -1458,6 +1473,10 @@ ${currentInput}`
   }
 
   // ── Render ───────────────────────────────────────────────
+  if (showOnboarding) {
+    return <OnboardingScreen onComplete={handleOnboardingComplete} />
+  }
+
   return (
     <div className="app-container" style={{ '--sidebar-width': `${sidebarWidth}px` } as any}>
 

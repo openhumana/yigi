@@ -9,7 +9,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "vite",
-    "electron:build": "vite build && electron-builder"
+    "build:electron-main": "node scripts/build-electron.mjs",
+    "electron:build": "node scripts/build-electron.mjs && vite build && electron-builder",
+    "electron:build:win": "node scripts/build-electron.mjs && vite build && electron-builder --win",
+    "electron:build:mac": "node scripts/build-electron.mjs && vite build && electron-builder --mac",
+    "electron:build:linux": "node scripts/build-electron.mjs && vite build && electron-builder --linux"
   },
   "dependencies": {
     "@langchain/google-genai": "^0.0.10",

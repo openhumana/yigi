@@ -169,6 +169,30 @@ Three panel tabs in the sidebar header: Chat (default), Missions (Target icon), 
 - Web mode: localStorage (`yogi_missions`, `yogi_skills`)
 - Default skills auto-loaded on first run if no saved skills exist
 
+## Onboarding (First-Run)
+
+`src/components/OnboardingScreen.tsx` — shown when `isElectron && no API keys saved`.
+- Step 1: Welcome screen with feature list
+- Step 2: Provider picker (Groq / OpenAI / Gemini) + API key input
+- Calls `yogi.saveSettings()` on completion, then dismisses
+- "Skip for now" closes without saving (user can configure via Settings later)
+
+## Electron Packaging
+
+Build pipeline: `scripts/build-electron.mjs` (esbuild) → `vite build` → `electron-builder`
+
+```bash
+npm run build:electron-main  # Compile main/index.ts → dist-electron/main/index.js (15MB bundle)
+npm run electron:build:mac   # macOS .dmg (must run on macOS)
+npm run electron:build:win   # Windows .exe installer (NSIS, can cross-compile)
+npm run electron:build:linux # Linux .AppImage
+npm run electron:build       # All platforms
+```
+
+- `scripts/build-electron.mjs` — esbuild bundles `main/index.ts` + `preload/index.ts` with ALL Node deps bundled (only `electron` externalized). Output: `dist-electron/main/index.js` (~15MB), `dist-electron/preload/index.js` (~2.5KB)
+- `electron-builder.yml` — cross-platform targets: Mac dmg (x64+arm64), Win nsis (x64), Linux AppImage (x64). Uses local `node_modules/electron/dist` to avoid re-downloading.
+- Linux AppImage verified buildable at `build/YogiBrowser-Linux-1.0.0.AppImage` (~130MB)
+
 ## Development
 
 ```bash
@@ -176,17 +200,6 @@ npm install
 npm run dev              # Vite web preview on port 5000
 npm run electron:dev     # Full Electron desktop (requires local electron install)
 ```
-
-## Build
-
-```bash
-npm run build            # Builds React/Vite to dist/ (static deployment)
-npm run electron:build   # Full Electron desktop build
-```
-
-## Deployment
-
-Configured as a **static** deployment — `npm run build` outputs to `dist/`.
 
 ## Replit Setup Notes
 

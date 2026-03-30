@@ -1,0 +1,55 @@
+directories:
+  output: build
+  buildResources: resources
+appId: com.openhumana.yogi
+productName: Yogi Browser
+copyright: Copyright © 2024 OpenHumana
+electronDist: node_modules/electron/dist
+electronVersion: 29.1.1
+files:
+  - filter:
+      - dist/**
+      - dist-electron/**
+      - package.json
+asar: true
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: YogiBrowser-Win-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: Yogi Browser
+  uninstallDisplayName: Yogi Browser
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  artifactName: YogiBrowser-Mac-${version}.${ext}
+dmg:
+  contents:
+    - x: 410
+      'y': 150
+      type: link
+      path: /Applications
+    - x: 130
+      'y': 150
+      type: file
+linux:
+  icon: resources/icon.png
+  category: Network
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  artifactName: YogiBrowser-Linux-${version}.${ext}
+publish: null

@@ -1,6 +1,6 @@
-"use strict";
-const { ipcRenderer, contextBridge } = require("electron");
-const yogi = {
+// preload/index.ts
+var { ipcRenderer, contextBridge } = require("electron");
+var yogi = {
   // AI Request (Think -> Plan -> Task)
   sendChatMessage: (prompt, tier = "high", workflow, keys) => ipcRenderer.invoke("ai-request", { prompt, tier, workflow, keys }),
   // Terminal / Browser Execution
@@ -20,11 +20,22 @@ const yogi = {
   humanInteraction: (type, data) => ipcRenderer.invoke("human-interaction", { type, data }),
   getBrowserState: () => ipcRenderer.invoke("get-browser-state"),
   domAction: (selector, action, value) => ipcRenderer.invoke("dom-action", { selector, action, value }),
-  parsePdf: (path) => ipcRenderer.invoke("parse-pdf", { path })
+  parsePdf: (path) => ipcRenderer.invoke("parse-pdf", { path }),
+  captureScreenshot: () => ipcRenderer.invoke("capture-screenshot"),
+  waitForStability: (timeoutMs) => ipcRenderer.invoke("wait-for-stability", { timeoutMs: timeoutMs || 5e3 }),
+  validateAction: (action, before) => ipcRenderer.invoke("validate-action", { action, before }),
+  analyzeScreenshot: (screenshotBase64, actionDescription, expectedOutcome) => ipcRenderer.invoke("analyze-screenshot", { screenshotBase64, actionDescription, expectedOutcome }),
+  captureSnapshot: () => ipcRenderer.invoke("capture-snapshot"),
+  showNotification: (title, body) => ipcRenderer.invoke("show-notification", { title, body }),
+  getMissions: () => ipcRenderer.invoke("get-missions"),
+  saveMissions: (missions) => ipcRenderer.invoke("save-missions", missions),
+  getSkills: () => ipcRenderer.invoke("get-skills"),
+  saveSkills: (skills) => ipcRenderer.invoke("save-skills", skills),
+  injectSkills: (content) => ipcRenderer.invoke("inject-skills", { content })
 };
 try {
   contextBridge.exposeInMainWorld("yogi", yogi);
 } catch (e) {
   window.yogi = yogi;
 }
-console.log("🚀 [Bridge] Yogi bridge is active and attached to window.yogi");
+console.log("\u{1F680} [Bridge] Yogi bridge is active and attached to window.yogi");
