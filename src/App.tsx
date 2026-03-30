@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X, Rocket, Play, Pause, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, XCircle, Target, BookOpen, Square, Home } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X, Rocket, Play, Pause, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, XCircle, Target, BookOpen, Square, Home, Activity } from 'lucide-react'
 import { Mission, Skill } from './types/mission'
 import { DEFAULT_SKILLS } from './data/skills'
 import MissionEditor from './components/MissionEditor'
 import SkillsLibrary from './components/SkillsLibrary'
 import OnboardingScreen from './components/OnboardingScreen'
 import BrowserHomePage from './components/BrowserHomePage'
-import { useMissionRunner } from './hooks/useMissionRunner'
+import ActivityReport, { ActivityEntry } from './components/ActivityReport'
+import { useMissionRunner, SESSION_ID } from './hooks/useMissionRunner'
 
 // Detect Electron: window.yogi is set by the preload bridge at startup
 const isElectron = !!(window as any).yogi
@@ -281,7 +282,7 @@ const App = () => {
   const autoPilotRef = useRef(true)
   const [escalation, setEscalation] = useState<{ message: string; taskId?: string } | null>(null)
 
-  const [sidePanel, setSidePanel] = useState<'chat' | 'missions' | 'skills'>('chat')
+  const [sidePanel, setSidePanel] = useState<'chat' | 'missions' | 'skills' | 'activity'>('chat')
   const [missions, setMissions] = useState<Mission[]>([])
   const [skills, setSkills] = useState<Skill[]>([])
   const [activeMission, setActiveMission] = useState<Mission | null>(null)
@@ -290,6 +291,12 @@ const App = () => {
   const [autoExecuting, setAutoExecuting] = useState(false)
   const autoExecutingRef = useRef(false)
   const sessionStartRef = useRef<number>(Date.now())
+
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('yogi_activity_log') || '[]')
+    } catch { return [] }
+  })
 
   useEffect(() => { autoPilotRef.current = autoPilot }, [autoPilot])
   useEffect(() => { autoExecutingRef.current = autoExecuting }, [autoExecuting])
@@ -649,6 +656,39 @@ const App = () => {
     })
   }, [])
 
+  const appendActivityLog = useCallback((entry: ActivityEntry) => {
+    setActivityLog(prev => {
+      const updated = [...prev, entry]
+      if (isElectron) {
+        (window as any).yogi?.appendActivityLog?.(entry)
+      } else {
+        localStorage.setItem('yogi_activity_log', JSON.stringify(updated.slice(-500)))
+      }
+      return updated
+    })
+  }, [])
+
+  const clearActivityLog = useCallback(async () => {
+    setActivityLog([])
+    if (isElectron) {
+      await (window as any).yogi?.clearActivityLog?.()
+    } else {
+      localStorage.removeItem('yogi_activity_log')
+    }
+  }, [])
+
+  useEffect(() => {
+    const loadActivityLog = async () => {
+      if (isElectron) {
+        try {
+          const entries = await (window as any).yogi?.getActivityLog?.()
+          if (Array.isArray(entries)) setActivityLog(entries)
+        } catch {}
+      }
+    }
+    loadActivityLog()
+  }, [])
+
   const taskQueueRef = useRef<any[]>([])
   useEffect(() => { taskQueueRef.current = tasks }, [tasks])
 
@@ -749,6 +789,7 @@ const App = () => {
     },
     getLastAIResponse: () => lastAIResponseRef.current,
     refreshBrowserElements: refreshBrowserElements,
+    appendActivityLog: appendActivityLog,
   })
 
   const [resumeBanner, setResumeBanner] = useState<Mission | null>(null)
@@ -1655,6 +1696,17 @@ ${currentInput}`
               >
                 <BookOpen size={14} />
               </button>
+              <button
+                className={`panel-tab-btn ${sidePanel === 'activity' ? 'active' : ''}`}
+                title="Activity Log"
+                onClick={() => setSidePanel('activity')}
+                style={{ position: 'relative' }}
+              >
+                <Activity size={14} />
+                {activityLog.length > 0 && (
+                  <span className="panel-tab-badge">{activityLog.length > 99 ? '99+' : activityLog.length}</span>
+                )}
+              </button>
               <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
               <button
                 className={`autopilot-toggle ${autoPilot ? 'active' : ''}`}
@@ -1759,6 +1811,15 @@ ${currentInput}`
             onDelete={handleDeleteSkill}
             onToggle={handleToggleSkill}
             onManualToggle={handleManualSkillToggle}
+            onClose={() => setSidePanel('chat')}
+          />
+        )}
+
+        {sidePanel === 'activity' && (
+          <ActivityReport
+            entries={activityLog}
+            sessionId={SESSION_ID}
+            onClear={clearActivityLog}
             onClose={() => setSidePanel('chat')}
           />
         )}

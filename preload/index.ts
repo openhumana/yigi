@@ -111,6 +111,15 @@ const yogi = {
     ipcRenderer.removeAllListeners('browser-load-failed')
     ipcRenderer.on('browser-load-failed', (_: any, data: any) => callback(data))
   },
+
+  getActivityLog: () =>
+    ipcRenderer.invoke('get-activity-log'),
+
+  appendActivityLog: (entry: any) =>
+    ipcRenderer.invoke('append-activity-log', entry),
+
+  clearActivityLog: () =>
+    ipcRenderer.invoke('clear-activity-log'),
 }
 
 // 🟢 THE FIX: Use both methods for maximum reliability

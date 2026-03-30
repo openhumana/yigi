@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { app, BrowserWindow, BrowserView, shell, ipcMain, NativeImage, Notification, session } from 'electron'
-import { release } from 'node:os'
+import { release, homedir } from 'node:os'
 import { join } from 'node:path'
 import fs from 'fs'
 import { orchestrator } from './orchestrator'
@@ -8,6 +8,7 @@ import { sandbox } from './sandbox'
 import { humanInteraction } from './human_interaction'
 import { validateAction, detectCaptcha, detectSensitiveAction, type BrowserSnapshot, type ActionContext } from './validator'
 import { analyzeScreenshot } from './vision'
+import * as yaml from 'yaml'
 
 // ── Mac / Apple Silicon compatibility flags ────────────────────────────────
 // Must be set BEFORE app is ready
@@ -623,8 +624,6 @@ ipcMain.handle('show-notification', async (_, { title, body }) => {
 })
 
 // ── MISSIONS & SKILLS PERSISTENCE ─────────────────────────────────────
-import { homedir } from 'node:os'
-import * as yaml from 'yaml'
 
 const SKILLS_DIR = join(homedir(), '.yogibrowser', 'skills')
 
@@ -742,5 +741,55 @@ ipcMain.handle('capture-snapshot', async () => {
     return { status: 'success', snapshot }
   } catch (error: any) {
     return { status: 'error', message: error.message, snapshot: null }
+  }
+})
+
+// ── ACTIVITY LOG: Persistent activity logging ─────────────────────────────
+const ACTIVITY_LOG_PATH = join(homedir(), '.yogibrowser', 'activity-log.json')
+
+function ensureActivityLogFile() {
+  const dir = join(homedir(), '.yogibrowser')
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  if (!fs.existsSync(ACTIVITY_LOG_PATH)) fs.writeFileSync(ACTIVITY_LOG_PATH, '[]', 'utf-8')
+}
+
+function readActivityLog(): any[] {
+  try {
+    ensureActivityLogFile()
+    const raw = fs.readFileSync(ACTIVITY_LOG_PATH, 'utf-8')
+    return JSON.parse(raw) || []
+  } catch {
+    return []
+  }
+}
+
+function writeActivityLog(entries: any[]) {
+  ensureActivityLogFile()
+  fs.writeFileSync(ACTIVITY_LOG_PATH, JSON.stringify(entries, null, 2), 'utf-8')
+}
+
+ipcMain.handle('get-activity-log', () => {
+  return readActivityLog()
+})
+
+ipcMain.handle('append-activity-log', (_, entry: any) => {
+  try {
+    const entries = readActivityLog()
+    entries.push(entry)
+    writeActivityLog(entries)
+    return { status: 'success' }
+  } catch (error: any) {
+    console.error('[ActivityLog] Append failed:', error.message)
+    return { status: 'error', message: error.message }
+  }
+})
+
+ipcMain.handle('clear-activity-log', () => {
+  try {
+    writeActivityLog([])
+    return { status: 'success' }
+  } catch (error: any) {
+    console.error('[ActivityLog] Clear failed:', error.message)
+    return { status: 'error', message: error.message }
   }
 })

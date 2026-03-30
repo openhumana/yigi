@@ -161,13 +161,54 @@ Skills are sorted by priority (higher = loaded first), token-budgeted (8000 char
 
 ### Sidebar Panel Navigation
 
-Three panel tabs in the sidebar header: Chat (default), Missions (Target icon), Skills (Book icon). The active mission shows a control banner with Pause/Resume/Stop.
+Four panel tabs in the sidebar header: Chat (default), Missions (Target icon), Skills (Book icon), Activity (Activity icon). The active mission shows a control banner with Pause/Resume/Stop.
 
 ### Persistence
 
 - Electron: electron-store via IPC (`get-missions`, `save-missions`, `get-skills`, `save-skills`)
 - Web mode: localStorage (`yogi_missions`, `yogi_skills`)
 - Default skills auto-loaded on first run if no saved skills exist
+
+## Activity Logger (Task #12)
+
+Persistent activity log that records every Reddit post and comment the agent makes.
+
+### Key Files
+
+- `src/components/ActivityReport.tsx` — Activity panel UI (entry list grouped by subreddit, Generate Report button, copy/export)
+- `src/hooks/useMissionRunner.ts` — Detects Reddit post/comment URLs after each successful task; calls `appendActivityLog` callback
+- `main/index.ts` — IPC handlers: `get-activity-log`, `append-activity-log`, `clear-activity-log` (persisted to `~/.yogibrowser/activity-log.json`)
+- `preload/index.ts` — Bridge methods: `getActivityLog`, `appendActivityLog`, `clearActivityLog`
+
+### Activity Entry Schema
+
+```ts
+{
+  id: string          // unique ID
+  type: 'post' | 'comment' | 'reply'
+  subreddit: string   // extracted from reddit.com/r/{subreddit}/comments/...
+  url: string         // direct link to post/comment
+  title?: string      // post title if available
+  contentPreview: string  // first 100 chars of task description
+  timestamp: number   // ms epoch
+  sessionId: string   // unique per app session
+}
+```
+
+### Detection Logic
+
+After each mission task completes successfully, the runner checks the current browser URL against the pattern `reddit.com/r/{subreddit}/comments/{postId}/{...}`. If a match is found and it hasn't been logged already (deduped by URL), a new `ActivityEntry` is appended. The type is inferred: `post` if the URL has no comment segment, `comment` if the task description mentions "comment" or "reply".
+
+### Activity Panel Features
+
+- Entries grouped by subreddit with collapsible sections
+- Per-entry: type badge (post/comment), timestamp, content preview, external link button
+- Summary bar: total posts, comments, subreddits
+- "Generate Report" expands a formatted text block (standup-style summary)
+- "Copy to clipboard" and "Export as .txt" buttons
+- "Clear log" button (with danger styling)
+- Persists across app restarts: Electron uses JSON file; web mode uses localStorage
+- Activity tab badge shows live count of logged entries
 
 ## Onboarding (First-Run)
 

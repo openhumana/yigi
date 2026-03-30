@@ -9,6 +9,17 @@ interface BrowserElement {
   placeholder?: string
 }
 
+interface ActivityEntry {
+  id: string
+  type: 'post' | 'comment' | 'reply'
+  subreddit: string
+  url: string
+  title?: string
+  contentPreview: string
+  timestamp: number
+  sessionId: string
+}
+
 interface RunnerCallbacks {
   sendChat: (prompt: string) => Promise<string>
   addLog: (msg: string, type?: string) => void
@@ -22,6 +33,26 @@ interface RunnerCallbacks {
   waitForTaskQueueDrain: () => Promise<void>
   getLastAIResponse: () => string
   refreshBrowserElements: () => Promise<any[]>
+  appendActivityLog?: (entry: ActivityEntry) => void
+}
+
+export const SESSION_ID = `session-${Date.now()}`
+
+function extractRedditInfo(url: string): { subreddit: string; isPostUrl: boolean } | null {
+  try {
+    // Reddit post URLs: /r/{subreddit}/comments/{postId}/{slug}/
+    // Reddit comment permalink: /r/{subreddit}/comments/{postId}/{slug}/{commentId}/
+    // We detect "comment" by a non-empty 6th path segment (commentId) after the slug
+    const m = url.match(/reddit\.com\/r\/([^/?#]+)\/comments\/([^/?#]+)(?:\/([^/?#]*)(?:\/([^/?#]+))?)?/)
+    if (!m) return null
+    const subreddit = m[1]
+    const commentId = m[4]  // only present on direct comment permalinks
+    return {
+      subreddit,
+      isPostUrl: !commentId,
+    }
+  } catch {}
+  return null
 }
 
 export function useMissionRunner(callbacks: RunnerCallbacks) {
@@ -31,6 +62,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
   const abortRef = useRef(false)
   const callbacksRef = useRef(callbacks)
   const taskResultsRef = useRef<Record<string, string>>({})
+  const recentlyLoggedRef = useRef<Map<string, number>>(new Map())
   callbacksRef.current = callbacks
 
   useEffect(() => {
@@ -178,6 +210,64 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     return []
   }, [])
 
+  const maybeLogActivity = useCallback((taskDescription: string, urlBeforeTask: string, loopItem?: string) => {
+    if (!callbacksRef.current.appendActivityLog) return
+    const currentUrl = callbacksRef.current.getBrowserUrl()
+    if (!currentUrl) return
+
+    const redditInfo = extractRedditInfo(currentUrl)
+    if (!redditInfo) return
+
+    const urlChanged = currentUrl !== urlBeforeTask
+    if (!urlChanged) {
+      return
+    }
+
+    const prevOnSamePage = extractRedditInfo(urlBeforeTask)
+    const wasAlreadyOnThisPage = prevOnSamePage &&
+      prevOnSamePage.subreddit === redditInfo.subreddit &&
+      urlBeforeTask.split('?')[0] === currentUrl.split('?')[0]
+    if (wasAlreadyOnThisPage) {
+      return
+    }
+
+    const DEDUP_WINDOW_MS = 30000
+    const lastLogged = recentlyLoggedRef.current.get(currentUrl) || 0
+    if (Date.now() - lastLogged < DEDUP_WINDOW_MS) {
+      return
+    }
+
+    recentlyLoggedRef.current.set(currentUrl, Date.now())
+    if (recentlyLoggedRef.current.size > 200) {
+      const keys = Array.from(recentlyLoggedRef.current.keys()).slice(0, 100)
+      keys.forEach(k => recentlyLoggedRef.current.delete(k))
+    }
+
+    const desc = (taskDescription || loopItem || '').toLowerCase()
+    const isActionComment = desc.includes('comment') || desc.includes('reply')
+    const entryType: 'post' | 'comment' | 'reply' = isActionComment && !redditInfo.isPostUrl
+      ? 'reply'
+      : isActionComment
+      ? 'comment'
+      : redditInfo.isPostUrl
+      ? 'post'
+      : 'comment'
+
+    const contentLabel = (loopItem || taskDescription || '').slice(0, 120)
+    const entry: ActivityEntry = {
+      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: entryType,
+      subreddit: redditInfo.subreddit,
+      url: currentUrl,
+      title: contentLabel,
+      contentPreview: contentLabel.slice(0, 100),
+      timestamp: Date.now(),
+      sessionId: SESSION_ID,
+    }
+    callbacksRef.current.appendActivityLog(entry)
+    callbacksRef.current.addLog(`[Activity] Logged ${entryType} in r/${redditInfo.subreddit}`, 'info')
+  }, [])
+
   const captureTaskOutput = useCallback((taskId: string, output: string) => {
     taskResultsRef.current[taskId] = output
     updateMission(m => ({
@@ -296,6 +386,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           const item = loopItems[i]
           const prompt = buildTaskPrompt(task, item, i, total)
 
+          const urlBeforeIter = callbacksRef.current.getBrowserUrl() || ''
           callbacksRef.current.addLog(`[Mission] Loop iteration ${i + 1}/${total}: ${item}`, 'info')
           await callbacksRef.current.sendChat(prompt)
           await waitForExecution()
@@ -304,6 +395,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
           const iterOutput = callbacksRef.current.getLastAIResponse()
           const prevOutput = taskResultsRef.current[task.id] || ''
           captureTaskOutput(task.id, prevOutput ? `${prevOutput}\n${iterOutput}` : iterOutput)
+          maybeLogActivity(task.description, urlBeforeIter, item)
 
           completedIterations = i + 1
         }
@@ -318,6 +410,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       }
 
       if (isAborted()) return false
+      const urlBeforeTask = callbacksRef.current.getBrowserUrl() || ''
       const prompt = buildTaskPrompt(task)
       await callbacksRef.current.sendChat(prompt)
       await waitForExecution()
@@ -341,6 +434,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
 
       captureTaskOutput(task.id, aiResponse || `Completed: ${task.description}`)
       updateTask(task.id, { status: 'completed' })
+      maybeLogActivity(task.description, urlBeforeTask)
       return true
     } catch (err: any) {
       if (isAborted()) return false
@@ -349,7 +443,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       updateTask(task.id, { status: 'failed', result: err.message || String(err) })
       return false
     }
-  }, [evaluateCondition, resolveLoopItems, verifySuccessCriteria, captureTaskOutput, updateTask, waitForExecution])
+  }, [evaluateCondition, resolveLoopItems, verifySuccessCriteria, captureTaskOutput, maybeLogActivity, updateTask, waitForExecution])
 
   const runMissionLoop = useCallback(async () => {
     try {
