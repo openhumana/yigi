@@ -309,7 +309,7 @@ const App = () => {
   // Browser state
   // In web mode all pages go through the /__proxy endpoint (strips X-Frame-Options)
   const proxyUrl = (target: string) => `/__proxy?url=${encodeURIComponent(target)}`
-  const DEFAULT_URL = 'https://www.google.com'
+  const DEFAULT_URL = 'https://www.reddit.com/r/sales/'
   const [url, setUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : proxyUrl(DEFAULT_URL))
   const [inputUrl, setInputUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : DEFAULT_URL)
 
@@ -1871,6 +1871,8 @@ ${currentInput}`
               src={url}
               style={{ width: '100%', height: '100%', border: 'none' }}
               title="Yogi Browser Viewport"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-modals"
+              referrerPolicy="no-referrer-when-downgrade"
               onLoad={() => {
                 // Request DOM state from the newly loaded page
                 setTimeout(() => {

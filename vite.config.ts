@@ -95,6 +95,7 @@ const STRIP_HEADERS = new Set([
   'x-frame-options','content-security-policy','content-security-policy-report-only',
   'x-content-type-options','frame-options','cross-origin-opener-policy',
   'cross-origin-embedder-policy','cross-origin-resource-policy',
+  'set-cookie','strict-transport-security',
 ])
 
 async function proxyMiddleware(
@@ -150,6 +151,10 @@ async function proxyMiddleware(
         ...outHeaders,
         'content-type': 'text/html; charset=utf-8',
         'content-security-policy': "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
+        'permissions-policy': '',
+        'cross-origin-resource-policy': 'cross-origin',
+        'cross-origin-embedder-policy': 'unsafe-none',
+        'cross-origin-opener-policy': 'unsafe-none',
       }
       res.writeHead(upstream.status, permissiveHeaders)
       res.end(html)
