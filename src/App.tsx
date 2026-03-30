@@ -5,6 +5,119 @@ import { ChevronLeft, ChevronRight, RotateCw, Send, ShieldCheck, Settings, X } f
 const isElectron = !!(window as any).yogi
 
 // ──────────────────────────────────────────────
+// MOCK MODE — Web preview simulation layer
+// Active whenever isElectron is false.
+// Nothing below touches real Electron APIs.
+// ──────────────────────────────────────────────
+
+type MockElement = { tag: string; text: string; selector: string; ariaLabel?: string; placeholder?: string }
+
+const MOCK_BROWSER_MAPS: Record<string, MockElement[]> = {
+  reddit_post: [
+    { tag: 'button', text: 'Create Post',       selector: '.create-post-button',            ariaLabel: 'Create Post' },
+    { tag: 'input',  text: '',                  selector: 'input[name="title"]',            placeholder: 'Title' },
+    { tag: 'textarea', text: '',                selector: 'textarea[name="text"]',          placeholder: 'Text (optional)' },
+    { tag: 'button', text: 'Post',              selector: 'button[type="submit"].submit',   ariaLabel: 'Post' },
+    { tag: 'a',      text: 'r/sales',           selector: 'a[href="/r/sales/"]' },
+    { tag: 'input',  text: '',                  selector: 'input[placeholder="Search"]',    placeholder: 'Search' },
+    { tag: 'button', text: 'Log In',            selector: '.login-button' },
+  ],
+  reddit_reply: [
+    { tag: 'button', text: 'Reply',             selector: 'button.reply-button',            ariaLabel: 'Reply' },
+    { tag: 'textarea', text: '',                selector: 'div[contenteditable="true"].notranslate', placeholder: 'What are your thoughts?' },
+    { tag: 'button', text: 'Save',              selector: 'button.save-button' },
+    { tag: 'a',      text: 'View comments',     selector: 'a[data-testid="comments-page-link"]' },
+    { tag: 'button', text: 'Upvote',            selector: 'button[aria-label="upvote"]',    ariaLabel: 'upvote' },
+    { tag: 'button', text: 'Share',             selector: 'button[aria-label="Share"]',     ariaLabel: 'Share' },
+  ],
+  linkedin: [
+    { tag: 'input',  text: '',                  selector: 'input#search-keywords',          placeholder: 'Search' },
+    { tag: 'button', text: 'Connect',           selector: 'button[aria-label="Connect"]',   ariaLabel: 'Connect' },
+    { tag: 'button', text: 'Message',           selector: 'button[aria-label="Message"]',   ariaLabel: 'Message' },
+    { tag: 'textarea', text: '',               selector: 'div.msg-form__contenteditable',  placeholder: 'Write a message…' },
+    { tag: 'button', text: 'Send',             selector: 'button.msg-form__send-button',   ariaLabel: 'Send' },
+    { tag: 'button', text: 'Follow',           selector: 'button[aria-label="Follow"]',    ariaLabel: 'Follow' },
+  ],
+}
+
+function mockBrowserState(workflow: string): MockElement[] {
+  return MOCK_BROWSER_MAPS[workflow] ?? MOCK_BROWSER_MAPS['reddit_post']
+}
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+async function mockAIResponse(
+  userInput: string,
+  workflow: string,
+  elements: MockElement[]
+): Promise<{ thought: string; tasks: any[] }> {
+  await sleep(900) // simulate network latency
+
+  const lower = userInput.toLowerCase()
+  const tasks: any[] = []
+
+  // Pick tasks contextually from the mock element map
+  if (lower.includes('post') || lower.includes('submit') || lower.includes('create')) {
+    const titleEl  = elements.find(e => e.placeholder?.toLowerCase().includes('title') || e.selector.includes('title'))
+    const submitEl = elements.find(e => e.text.toLowerCase().includes('post') || e.selector.includes('submit'))
+    const createEl = elements.find(e => e.text.toLowerCase().includes('create') || e.selector.includes('create'))
+
+    if (createEl) tasks.push({
+      action: 'dom_click',
+      description: `Click "${createEl.text || 'Create'}" to open the post composer`,
+      payload: { selector: createEl.selector },
+    })
+    if (titleEl) tasks.push({
+      action: 'dom_type',
+      description: 'Type the post title into the title field',
+      payload: { selector: titleEl.selector, value: `[AI-generated title for: ${userInput.slice(0, 40)}]` },
+    })
+    if (submitEl) tasks.push({
+      action: 'dom_click',
+      description: `Click "${submitEl.text || 'Submit'}" to publish the post`,
+      payload: { selector: submitEl.selector },
+    })
+  } else if (lower.includes('reply') || lower.includes('comment')) {
+    const replyEl   = elements.find(e => e.text.toLowerCase().includes('reply') || e.selector.includes('reply'))
+    const textEl    = elements.find(e => e.tag === 'textarea' || e.selector.includes('contenteditable'))
+    const saveEl    = elements.find(e => e.text.toLowerCase().includes('save') || e.selector.includes('save'))
+
+    if (replyEl)  tasks.push({ action: 'dom_click', description: 'Open the reply composer', payload: { selector: replyEl.selector } })
+    if (textEl)   tasks.push({ action: 'dom_type',  description: 'Type the reply text', payload: { selector: textEl.selector, value: `[AI-generated reply to: ${userInput.slice(0, 40)}]` } })
+    if (saveEl)   tasks.push({ action: 'dom_click', description: 'Submit the reply', payload: { selector: saveEl.selector } })
+  } else if (lower.includes('message') || lower.includes('connect') || lower.includes('linkedin')) {
+    const connectEl = elements.find(e => e.ariaLabel?.toLowerCase().includes('connect') || e.text.toLowerCase().includes('connect'))
+    const msgEl     = elements.find(e => e.tag === 'textarea' || e.selector.includes('contenteditable'))
+    const sendEl    = elements.find(e => e.text.toLowerCase().includes('send') || e.selector.includes('send'))
+
+    if (connectEl) tasks.push({ action: 'dom_click', description: 'Click Connect to send a connection request', payload: { selector: connectEl.selector } })
+    if (msgEl)     tasks.push({ action: 'dom_type',  description: 'Type the outreach message', payload: { selector: msgEl.selector, value: `[AI-generated outreach: ${userInput.slice(0, 40)}]` } })
+    if (sendEl)    tasks.push({ action: 'dom_click', description: 'Click Send to deliver the message', payload: { selector: sendEl.selector } })
+  } else if (lower.includes('search') || lower.includes('find')) {
+    const searchEl = elements.find(e => e.placeholder?.toLowerCase().includes('search') || e.selector.includes('search'))
+    if (searchEl) tasks.push({ action: 'dom_type', description: 'Type search query into the search bar', payload: { selector: searchEl.selector, value: userInput } })
+  } else {
+    // Generic fallback — pick first clickable, then first typeable
+    const clickable = elements.find(e => e.tag === 'button' || e.tag === 'a')
+    const typeable  = elements.find(e => e.tag === 'input' || e.tag === 'textarea')
+    if (clickable) tasks.push({ action: 'dom_click', description: `Click ${clickable.text || clickable.selector}`, payload: { selector: clickable.selector } })
+    if (typeable)  tasks.push({ action: 'dom_type',  description: `Type into ${typeable.placeholder || typeable.selector}`, payload: { selector: typeable.selector, value: userInput } })
+  }
+
+  const workflowLabel: Record<string, string> = {
+    reddit_post:  'Reddit Poster',
+    reddit_reply: 'Reddit Replier',
+    linkedin:     'LinkedIn Outreach',
+  }
+
+  const thought = tasks.length
+    ? `I've planned ${tasks.length} action${tasks.length > 1 ? 's' : ''} for the ${workflowLabel[workflow] ?? workflow} workflow. Review the queue below and approve each step.`
+    : `I couldn't map that request to specific page elements. Try a more specific command like "create a post" or "reply to the top comment".`
+
+  return { thought, tasks }
+}
+
+// ──────────────────────────────────────────────
 // Chat Bubble Component
 // ──────────────────────────────────────────────
 const ChatBubble = ({ message, role }: { message: string, role: 'agent' | 'user' }) => (
@@ -166,10 +279,33 @@ const App = () => {
 
     try {
       if (!isElectron) {
-        setMessages(prev => [...prev, {
-          role: 'agent',
-          message: '⚠️ Desktop mode required: Yogi runs as an Electron app. Add your API keys in Settings, then launch via npm run electron:dev.'
-        }])
+        // ── MOCK MODE: full simulated pipeline (web preview) ──────────────
+        setThinkingLog('Scanning page for interactive elements...')
+        await sleep(600)
+
+        const elements = mockBrowserState(workflow)
+        setThinkingLog(`Found ${elements.length} interactive elements on page`)
+        await sleep(600)
+
+        setThinkingLog('Analyzing page structure...')
+        await sleep(600)
+
+        setThinkingLog('Sending context to AI brain...')
+        await sleep(400)
+
+        const res = await mockAIResponse(currentInput, workflow, elements)
+
+        setThinkingLog('Generating task queue...')
+        await sleep(300)
+
+        setMessages(prev => [...prev, { role: 'agent', message: res.thought }])
+
+        if (res.tasks.length > 0) {
+          setTasks(res.tasks.map((t: any, i: number) => ({
+            ...t,
+            id: `task-${Date.now()}-${i}`
+          })))
+        }
         return
       }
 
@@ -248,7 +384,16 @@ ${currentInput}`
     // Immediately remove from queue visually
     setTasks(prev => prev.filter(t => t.id !== id))
 
-    if (!isElectron) return
+    if (!isElectron) {
+      const actionLabel = task.action === 'dom_type'
+        ? `TYPE "${task.payload?.value?.slice(0, 40) ?? ''}" into ${task.payload?.selector}`
+        : `CLICK ${task.payload?.selector}`
+      setMessages(prev => [...prev, {
+        role: 'agent',
+        message: `✅ Simulated: ${actionLabel}`
+      }])
+      return
+    }
 
     try {
       if (task.action === 'dom_click' || task.action === 'dom_type') {
