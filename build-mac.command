@@ -1,84 +1,113 @@
 #!/bin/bash
-# Yogi Browser — Mac Builder
-# Double-click this file to build the Mac app
-
 cd "$(dirname "$0")"
 
-echo ""
-echo "====================================="
-echo "  Yogi Browser — Mac App Builder"
-echo "====================================="
+clear
+echo "======================================"
+echo "   Yogi Browser — Mac App Builder"
+echo "======================================"
 echo ""
 
-# Check for Node.js
+# ── Check Node.js ──────────────────────────────────────────
 if ! command -v node &>/dev/null; then
-  echo "❌ Node.js is not installed."
+  echo "❌  Node.js is not installed."
   echo ""
-  echo "Please install it first:"
-  echo "  1. Go to https://nodejs.org"
-  echo "  2. Click the big green Download button"
-  echo "  3. Install it (click through the steps)"
-  echo "  4. Then double-click this file again"
+  echo "    1. Open Safari and go to:  nodejs.org"
+  echo "    2. Click the green Download button"
+  echo "    3. Open the downloaded file and click through the installer"
+  echo "    4. Come back and double-click this file again"
   echo ""
   read -p "Press Enter to close..."
   exit 1
 fi
-
-echo "✅ Node.js found: $(node --version)"
+echo "✅  Node.js ready  ($(node --version))"
 echo ""
 
-# Ask for Groq API key
-echo "Your Groq API key will be embedded into the app."
-echo "Get one free at: https://console.groq.com"
+# ── Groq API Key ───────────────────────────────────────────
+echo "Enter your Groq API key below."
+echo "It starts with  gsk_"
+echo "(Get one free at https://console.groq.com)"
 echo ""
-read -p "Paste your Groq API key (starts with gsk_): " GROQ_KEY
+read -p "Groq API Key: " GROQ_KEY
+echo ""
 
-if [ -z "$GROQ_KEY" ]; then
+# ── Install packages ───────────────────────────────────────
+echo "📦  Installing packages..."
+npm install --silent 2>&1 | tail -3
+echo "✅  Packages ready"
+echo ""
+
+# ── Build ──────────────────────────────────────────────────
+echo "🔨  Building Yogi Browser..."
+echo "    (Takes 3-5 minutes — please wait)"
+echo ""
+DEFAULT_GROQ_KEY="$GROQ_KEY" npm run electron:build:mac 2>&1
+BUILD_STATUS=$?
+
+if [ $BUILD_STATUS -ne 0 ]; then
   echo ""
-  echo "⚠️  No key entered. Building without pre-loaded key."
-  echo "   Users will see the setup screen on first launch."
-fi
-echo ""
-
-# Install dependencies
-echo "📦 Installing dependencies (this takes 1-2 minutes first time)..."
-npm install --silent
-if [ $? -ne 0 ]; then
-  echo "❌ Dependency install failed. Check your internet connection."
-  read -p "Press Enter to close..."
-  exit 1
-fi
-echo "✅ Dependencies ready"
-echo ""
-
-# Build the app
-echo "🔨 Building Yogi Browser for Mac..."
-echo "   (This takes 2-5 minutes)"
-echo ""
-DEFAULT_GROQ_KEY="$GROQ_KEY" npm run electron:build:mac
-if [ $? -ne 0 ]; then
-  echo ""
-  echo "❌ Build failed. Please copy the error above and share it."
+  echo "❌  Build failed. Please screenshot this window and share it."
   read -p "Press Enter to close..."
   exit 1
 fi
 
+# ── Find the .app inside the zip ──────────────────────────
 echo ""
-echo "====================================="
-echo "  ✅ Build Complete!"
-echo "====================================="
-echo ""
-echo "Your app is in the 'build' folder."
-echo "Look for: YogiBrowser-Mac-1.0.0-*.zip"
-echo ""
-echo "To install:"
-echo "  1. Open the 'build' folder (opening now...)"
-echo "  2. Double-click the .zip file to extract it"
-echo "  3. Move 'Yogi Browser.app' to your Applications folder"
-echo "  4. Right-click it → Open → Open (to bypass Mac security)"
+echo "📂  Finding your app..."
+
+ZIP=$(ls build/YogiBrowser-Mac-*arm64*.zip 2>/dev/null | head -1)
+if [ -z "$ZIP" ]; then
+  ZIP=$(ls build/YogiBrowser-Mac-*.zip 2>/dev/null | head -1)
+fi
+
+if [ -z "$ZIP" ]; then
+  echo "❌  Could not find the built zip. Check the 'build' folder manually."
+  open build/
+  read -p "Press Enter to close..."
+  exit 1
+fi
+
+echo "✅  Found: $ZIP"
 echo ""
 
-# Open the build folder
-open build/ 2>/dev/null || true
+# ── Extract the zip ────────────────────────────────────────
+rm -rf /tmp/yogi-install
+mkdir -p /tmp/yogi-install
+unzip -q "$ZIP" -d /tmp/yogi-install
 
-read -p "Press Enter to close..."
+APP=$(find /tmp/yogi-install -name "*.app" | head -1)
+if [ -z "$APP" ]; then
+  echo "❌  Could not extract the app."
+  read -p "Press Enter to close..."
+  exit 1
+fi
+
+# ── Install to Applications ────────────────────────────────
+echo "🚀  Installing Yogi Browser to your Applications folder..."
+rm -rf "/Applications/Yogi Browser.app"
+cp -R "$APP" "/Applications/Yogi Browser.app"
+
+if [ $? -eq 0 ]; then
+  echo ""
+  echo "======================================"
+  echo "  ✅  Yogi Browser is installed!"
+  echo "======================================"
+  echo ""
+  echo "  HOW TO OPEN IT:"
+  echo ""
+  echo "  1. Open Finder"
+  echo "  2. Click 'Applications' on the left"
+  echo "  3. Find 'Yogi Browser'"
+  echo "  4. RIGHT-CLICK it → click 'Open'"
+  echo "  5. Click 'Open' on the warning"
+  echo "  6. The app opens — you're ready!"
+  echo ""
+  # Open Applications so they can see it
+  open /Applications
+else
+  echo ""
+  echo "⚠️  Could not copy automatically."
+  echo "    Opening your build folder instead..."
+  open build/
+fi
+
+read -p "Press Enter to close this window..."
