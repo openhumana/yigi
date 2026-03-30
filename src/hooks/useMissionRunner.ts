@@ -21,6 +21,7 @@ interface RunnerCallbacks {
   getTaskQueueLength: () => number
   waitForTaskQueueDrain: () => Promise<void>
   getLastAIResponse: () => string
+  refreshBrowserElements: () => Promise<any[]>
 }
 
 export function useMissionRunner(callbacks: RunnerCallbacks) {
@@ -235,11 +236,14 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
     updateTask(task.id, { status: 'running' })
     callbacksRef.current.addLog(`[Mission] Running task: ${task.description}`, 'info')
 
+    await callbacksRef.current.refreshBrowserElements()
+
     if (task.targetUrl) {
       callbacksRef.current.addLog(`[Mission] Navigating to ${task.targetUrl}`, 'info')
       callbacksRef.current.navigateTo(task.targetUrl)
       await sleep(3000)
       if (isAborted()) return false
+      await callbacksRef.current.refreshBrowserElements()
     }
 
     try {
@@ -322,6 +326,7 @@ export function useMissionRunner(callbacks: RunnerCallbacks) {
       await waitForExecution()
       if (isAborted()) return false
 
+      await callbacksRef.current.refreshBrowserElements()
       const aiResponse = callbacksRef.current.getLastAIResponse()
 
       if (task.successCriteria) {

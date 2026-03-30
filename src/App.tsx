@@ -295,6 +295,22 @@ const App = () => {
   const proxyElementsRef = useRef<any[]>([])
   const [proxyElements, setProxyElements] = useState<any[]>([])
 
+  const cachedBrowserElementsRef = useRef<any[]>([])
+
+  const refreshBrowserElements = useCallback(async () => {
+    if (isElectron) {
+      try {
+        const state = await (window as any).yogi.getBrowserState()
+        if (state?.status === 'success' && state.elements) {
+          cachedBrowserElementsRef.current = state.elements
+        }
+      } catch {}
+    } else {
+      cachedBrowserElementsRef.current = proxyElementsRef.current
+    }
+    return cachedBrowserElementsRef.current
+  }, [])
+
   const webviewRef = useRef<any>(null)
   const sidebarRef = useRef<any>(null)
   const chatFeedRef = useRef<any>(null)
@@ -517,8 +533,18 @@ const App = () => {
       setInput('')
       setMessages(prev => [...prev, { role: 'agent', message: `[Mission] ${prompt.slice(0, 100)}...` }])
       let responseText = ''
+
+      const elements = await refreshBrowserElements()
+      const elementsContext = elements.length > 0
+        ? `BROWSER CONTEXT — ${elements.length} interactive elements found:\n` +
+          elements.map((el: any) =>
+            `  [${el.tag}] text="${el.text}" selector="${el.selector}"${el.ariaLabel ? ` aria="${el.ariaLabel}"` : ''}${el.placeholder ? ` placeholder="${el.placeholder}"` : ''}`
+          ).join('\n')
+        : `BROWSER CONTEXT — No interactive elements detected on current page.`
+      const contextPrompt = `${elementsContext}\n\nMISSION TASK:\n${prompt}`
+
       if (isElectron) {
-        const res = await (window as any).yogi.sendChatMessage(prompt, 'high', workflow, settings)
+        const res = await (window as any).yogi.sendChatMessage(contextPrompt, 'high', workflow, settings)
         if (res.text) {
           responseText = res.text
           setMessages(prev => [...prev, { role: 'agent', message: res.text }])
@@ -542,7 +568,7 @@ const App = () => {
       }
     },
     getBrowserUrl: () => inputUrl,
-    getBrowserElements: () => proxyElementsRef.current,
+    getBrowserElements: () => cachedBrowserElementsRef.current,
     navigateTo: (targetUrl: string) => {
       if (isElectron && webviewRef.current) {
         webviewRef.current.loadURL(targetUrl)
@@ -576,6 +602,7 @@ const App = () => {
       })
     },
     getLastAIResponse: () => lastAIResponseRef.current,
+    refreshBrowserElements: refreshBrowserElements,
   })
 
   const [resumeBanner, setResumeBanner] = useState<Mission | null>(null)
