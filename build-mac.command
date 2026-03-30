@@ -87,6 +87,9 @@ rm -rf "/Applications/Yogi Browser.app"
 cp -R "$APP" "/Applications/Yogi Browser.app"
 
 if [ $? -eq 0 ]; then
+  # Remove macOS quarantine so the app loads correctly (no blank screen)
+  xattr -rd com.apple.quarantine "/Applications/Yogi Browser.app" 2>/dev/null || true
+
   echo ""
   echo "======================================"
   echo "  ✅  Yogi Browser is installed!"
@@ -94,15 +97,16 @@ if [ $? -eq 0 ]; then
   echo ""
   echo "  HOW TO OPEN IT:"
   echo ""
-  echo "  1. Open Finder"
-  echo "  2. Click 'Applications' on the left"
-  echo "  3. Find 'Yogi Browser'"
-  echo "  4. RIGHT-CLICK it → click 'Open'"
-  echo "  5. Click 'Open' on the warning"
-  echo "  6. The app opens — you're ready!"
+  echo "  1. Your Applications folder is opening now"
+  echo "  2. Find 'Yogi Browser' and double-click it"
+  echo "  3. If a warning appears, click 'Open'"
+  echo "  4. The app opens — you're ready!"
   echo ""
   # Open Applications so they can see it
   open /Applications
+  # Launch the app directly
+  sleep 1
+  open "/Applications/Yogi Browser.app"
 else
   echo ""
   echo "⚠️  Could not copy automatically."
