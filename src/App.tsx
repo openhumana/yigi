@@ -686,7 +686,7 @@ ${currentInput}`
 
   type ApproveResult = { status: 'success' | 'escalated' | 'error'; retries?: number; reason?: string }
 
-  const approveTask = async (idOrTask: string | any): Promise<ApproveResult> => {
+  const approveTask = async (idOrTask: string | any, onRetry?: (attempt: number, reason: string) => void): Promise<ApproveResult> => {
     let task: any
     if (typeof idOrTask === 'string') {
       task = tasks.find(t => t.id === idOrTask)
@@ -709,7 +709,9 @@ ${currentInput}`
         let currentSelector = task.payload?.selector
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           if (attempt > 0) {
+            const retryReason = lastResult.reason || 'Verification failed'
             logVerification(`🔄 Retry ${attempt}/${MAX_RETRIES} — waiting ${RETRY_DELAYS[attempt - 1]}ms...`)
+            onRetry?.(attempt, retryReason)
             await sleep(RETRY_DELAYS[attempt - 1])
 
             if (iframe?.contentWindow) {
@@ -795,7 +797,9 @@ ${currentInput}`
         let currentSelector = task.payload.selector
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           if (attempt > 0) {
+            const retryReason2 = lastValidation.reason || 'Verification failed'
             logVerification(`🔄 Retry ${attempt}/${MAX_RETRIES} — waiting ${RETRY_DELAYS[attempt - 1]}ms...`)
+            onRetry?.(attempt, retryReason2)
             await sleep(RETRY_DELAYS[attempt - 1])
 
             logVerification(`🔍 Re-scanning page for alternative selectors...`)
@@ -957,6 +961,7 @@ ${currentInput}`
       }
 
       if (typeof task.confidence === 'number' && task.confidence < confThreshold) {
+        const confMsg = `Low confidence (${task.confidence}%) — needs manual review: "${task.description}"`
         addExecLog({
           action: task.action,
           description: task.description,
@@ -970,8 +975,12 @@ ${currentInput}`
           if (exists) return prev.map(t => t.id === task.id ? { ...t, sensitive: true } : t)
           return [{ ...task, sensitive: true }, ...prev]
         })
-        setNotification({ message: `Low confidence (${task.confidence}%) — needs manual review: "${task.description}"`, type: 'alert' })
-        continue
+        setNotification({ message: confMsg, type: 'alert' })
+        setEscalation({ message: confMsg, taskId: task.id })
+        playEscalationChime()
+        fireNotification('Yogi needs your review', confMsg)
+        setAutoExecuting(false)
+        return
       }
 
       const logId = `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
@@ -987,7 +996,15 @@ ${currentInput}`
 
       let result: ApproveResult
       try {
-        result = await approveTask(task)
+        result = await approveTask(task, (attempt, reason) => {
+          addExecLog({
+            action: task.action,
+            description: `Retry ${attempt}/${MAX_RETRIES}: ${task.description}`,
+            selector: task.payload?.selector,
+            status: 'retry',
+            reason,
+          })
+        })
       } catch (e: any) {
         result = { status: 'error', reason: e.message }
       }
@@ -1029,17 +1046,24 @@ ${currentInput}`
   }, [autoPilot, tasks, autoExecuteLoop])
 
   useEffect(() => {
-    const saved = localStorage.getItem('yogi_autoPilot')
-    if (saved === 'true') {
+    if (settings.autoPilot === true) {
       setAutoPilot(true)
       autoPilotRef.current = true
     }
-  }, [])
+  }, [settings.autoPilot])
 
   const toggleAutoPilot = useCallback(() => {
     setAutoPilot(prev => {
       const next = !prev
-      localStorage.setItem('yogi_autoPilot', String(next))
+      setSettings((s: any) => {
+        const updated = { ...s, autoPilot: next }
+        if (isElectron) {
+          (window as any).yogi.saveSettings(updated)
+        } else {
+          localStorage.setItem('yogi_settings', JSON.stringify(updated))
+        }
+        return updated
+      })
       if (!next && autoExecutingRef.current) {
         addExecLog({ action: 'pause', description: 'Auto-Pilot paused by user', status: 'skipped' })
       }
