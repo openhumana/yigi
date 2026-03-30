@@ -194,5 +194,12 @@ export default defineConfig({
     port: 5000,
     strictPort: true,
     allowedHosts: true,
+    proxy: {
+      '/api/browser': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
 })

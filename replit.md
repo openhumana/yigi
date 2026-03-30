@@ -11,13 +11,16 @@ Originally an Electron desktop application, adapted to run as a web app in the R
 - **Frontend**: React 18 + TypeScript + Vite (port 5000 for Replit preview)
 - **Styling**: Custom CSS dark theme (`src/styles/index.css`)
 - **State**: React useState hooks + localStorage for persistence
-- **AI**: LangChain integrations (Groq → Google Gemini → OpenAI, auto-fallback) — desktop only
+- **AI**: LangChain integrations (Groq → Google Gemini → OpenAI, auto-fallback) — desktop only; Groq direct API for web mode
 - **Electron (desktop only)**: Main process (`main/`), preload bridge (`preload/`), sandboxed terminal, electron-store for settings
-- **Proxy Browser**: `/__proxy?url=` endpoint in vite.config.ts strips X-Frame-Options/CSP and injects bridge script for live DOM interaction in web preview
+- **Real Browser Server**: `server/browser.js` — Express server on port 5001 using Playwright/Chromium; provides `/api/browser/{navigate,action,screenshot,ai,status}` endpoints. Started via `server/start-browser.sh` which sets the correct LD_LIBRARY_PATH for the Nix environment. Vite proxies `/api/browser/*` to port 5001.
+- **Proxy Browser (fallback)**: `/__proxy?url=` endpoint in vite.config.ts strips X-Frame-Options/CSP and injects bridge script for live DOM interaction when browser server is unavailable
 
 ## Key Files
 
-- `src/App.tsx` — Main React component. Detects Electron via `window.yogi`. Uses `<webview>` in Electron, `<iframe>` in web.
+- `server/browser.js` — Real browser automation server (Playwright/Chromium, port 5001). Endpoints: navigate, action, screenshot, ai, status, reset.
+- `server/start-browser.sh` — Startup wrapper; sets LD_LIBRARY_PATH to include Nix mesa-libgbm for Chromium.
+- `src/App.tsx` — Main React component. Detects Electron via `window.yogi`. Uses `<webview>` in Electron, `<img>` screenshot in web (real browser), `<iframe>` proxy fallback.
 - `src/main.tsx` — React entry point
 - `src/styles/index.css` — Full dark-themed CSS with CRM polish
 - `vite.config.ts` — Vite config + proxy middleware for live browsing

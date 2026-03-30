@@ -480,6 +480,82 @@ const App = () => {
   const proxyElementsRef = useRef<any[]>([])
   const [proxyElements, setProxyElements] = useState<any[]>([])
 
+  // ── Real Browser Server (Playwright) ─────────────────────────────────────
+  // When running in web mode, the Playwright browser server on port 5001 (proxied
+  // via vite at /api/browser/*) gives us real screenshots + DOM interaction.
+  const [browserServerReady, setBrowserServerReady] = useState(false)
+  const browserServerReadyRef = useRef(false)
+  const [browserScreenshot, setBrowserScreenshot] = useState<string | null>(null)
+  const browserServerElementsRef = useRef<any[]>([])
+
+  useEffect(() => {
+    browserServerReadyRef.current = browserServerReady
+  }, [browserServerReady])
+
+  const browserApi = {
+    navigate: async (targetUrl: string) => {
+      const res = await fetch('/api/browser/navigate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl }),
+      }).then(r => r.json())
+      if (res.screenshot) setBrowserScreenshot(res.screenshot)
+      if (res.elements) browserServerElementsRef.current = res.elements
+      if (res.url) setInputUrl(res.url)
+      return res
+    },
+    action: async (params: { type: string; selector?: string; value?: string; x?: number; y?: number; deltaY?: number }) => {
+      const res = await fetch('/api/browser/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      }).then(r => r.json())
+      if (res.screenshot) setBrowserScreenshot(res.screenshot)
+      if (res.elements) browserServerElementsRef.current = res.elements
+      if (res.url) setInputUrl(res.url)
+      return res
+    },
+    getState: async () => {
+      const res = await fetch('/api/browser/screenshot').then(r => r.json())
+      if (res.screenshot) setBrowserScreenshot(res.screenshot)
+      if (res.elements) browserServerElementsRef.current = res.elements
+      if (res.url) setInputUrl(res.url)
+      return res
+    },
+  }
+
+  // Check if browser server is available on startup (web mode only)
+  useEffect(() => {
+    if (isElectron) return
+    const checkServer = async () => {
+      try {
+        const res = await fetch('/api/browser/status', { signal: AbortSignal.timeout(4000) }).then(r => r.json())
+        if (res.ready) {
+          setBrowserServerReady(true)
+          browserServerReadyRef.current = true
+          console.log('[Yogi] Real browser server connected ✓')
+        }
+      } catch (e) {
+        console.warn('[Yogi] Browser server not available, using proxy fallback')
+      }
+    }
+    checkServer()
+    // Retry every 5s for up to 30s in case the server is still starting
+    const retries = [1000, 3000, 6000, 10000, 20000]
+    const timers = retries.map(delay => setTimeout(async () => {
+      if (browserServerReadyRef.current) return
+      try {
+        const res = await fetch('/api/browser/status', { signal: AbortSignal.timeout(4000) }).then(r => r.json())
+        if (res.ready) {
+          setBrowserServerReady(true)
+          browserServerReadyRef.current = true
+          console.log('[Yogi] Real browser server connected ✓ (retry)')
+        }
+      } catch {}
+    }, delay))
+    return () => timers.forEach(clearTimeout)
+  }, [])
+
   const cachedBrowserElementsRef = useRef<any[]>([])
 
   const refreshBrowserElements = useCallback(async () => {
@@ -490,6 +566,9 @@ const App = () => {
           cachedBrowserElementsRef.current = state.elements
         }
       } catch {}
+    } else if (browserServerReadyRef.current) {
+      const state = await browserApi.getState()
+      cachedBrowserElementsRef.current = browserServerElementsRef.current
     } else {
       cachedBrowserElementsRef.current = proxyElementsRef.current
     }
@@ -910,6 +989,8 @@ const App = () => {
     navigateTo: (targetUrl: string) => {
       if (isElectron) {
         ;(window as any).yogi?.browserNavigate(targetUrl)
+      } else if (browserServerReadyRef.current) {
+        browserApi.navigate(targetUrl)
       } else {
         const next = proxyUrl(targetUrl)
         setUrl(next)
@@ -1118,7 +1199,7 @@ const App = () => {
 
     try {
       if (!isElectron) {
-        // ── WEB MODE: proxy browser + simulated AI pipeline ───────────────
+        // ── WEB MODE: Real browser server (Playwright) or proxy fallback ──
         const logStep = (msg: string) => {
           setThinkingLog(msg)
           setThinkingLogs(prev => {
@@ -1128,37 +1209,65 @@ const App = () => {
           })
         }
 
-        // Request fresh DOM from proxy iframe, then wait for it to arrive
-        if (webviewRef.current?.contentWindow) {
-          webviewRef.current.contentWindow.postMessage({ type: 'yogi-dom-request' }, '*')
-        }
         logStep('Scanning page for interactive elements...')
-        await sleep(800)
 
-        // Use real proxy elements if available, else fall back to mock map
-        const elements = proxyElementsRef.current.length > 0
-          ? proxyElementsRef.current
-          : mockBrowserState(workflow)
-        const isLive = proxyElementsRef.current.length > 0
+        let elements: any[]
+        let isLive: boolean
 
-        logStep(`Found ${elements.length} interactive elements on ${isLive ? 'live page' : 'mock page'}`)
-        await sleep(600)
+        if (browserServerReadyRef.current) {
+          // Real Playwright browser: get live screenshot + elements
+          logStep('📡 Connecting to real browser (Playwright)...')
+          try {
+            const state = await browserApi.getState()
+            elements = state.elements || []
+            isLive = true
+            logStep(`📸 Got live page — ${elements.length} interactive elements found`)
+          } catch (e: any) {
+            logStep(`⚠ Browser server error: ${e.message} — falling back to mock`)
+            elements = mockBrowserState(workflow)
+            isLive = false
+          }
+        } else {
+          // Legacy proxy iframe fallback
+          if (webviewRef.current?.contentWindow) {
+            webviewRef.current.contentWindow.postMessage({ type: 'yogi-dom-request' }, '*')
+          }
+          await sleep(800)
+          elements = proxyElementsRef.current.length > 0 ? proxyElementsRef.current : mockBrowserState(workflow)
+          isLive = proxyElementsRef.current.length > 0
+          logStep(`Found ${elements.length} interactive elements on ${isLive ? 'live page' : 'mock page'}`)
+        }
+
+        await sleep(400)
 
         logStep('Analyzing page structure and mapping selectors...')
         await sleep(600)
 
-        logStep('Sending context to AI brain...')
-        await sleep(400)
-
-        const res = await mockAIResponse(currentInput, workflow, elements)
-
-        logStep(`Generating task queue — ${res.tasks.length} action(s) planned`)
-        await sleep(300)
-
-        finalizeThinking(res.thought)
-
-        if (res.tasks.length > 0) {
-          pushPlan(res.tasks, typeof res.confidence === 'number' ? res.confidence : undefined)
+        if (browserServerReadyRef.current) {
+          // Real AI via browser server using Groq
+          logStep('Sending page context to Groq AI...')
+          const aiRes = await fetch('/api/browser/ai', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userMessage: currentInput,
+              elements,
+              pageUrl: inputUrl,
+            }),
+          }).then(r => r.json())
+          logStep(`Generated ${aiRes.tasks?.length ?? 0} action(s)`)
+          finalizeThinking(aiRes.text || 'Ready.', aiRes.model)
+          if (aiRes.tasks?.length > 0) pushPlan(aiRes.tasks)
+        } else {
+          logStep('Sending context to AI brain...')
+          await sleep(400)
+          const res = await mockAIResponse(currentInput, workflow, elements)
+          logStep(`Generating task queue — ${res.tasks.length} action(s) planned`)
+          await sleep(300)
+          finalizeThinking(res.thought)
+          if (res.tasks.length > 0) {
+            pushPlan(res.tasks, typeof res.confidence === 'number' ? res.confidence : undefined)
+          }
         }
         return
       }
@@ -1387,6 +1496,60 @@ ${currentInput}`
     setTasks(prev => prev.filter(t => t.id !== task.id))
 
     if (!isElectron) {
+      // ── PRIMARY PATH: Real Playwright browser server ───────────────────
+      if (browserServerReadyRef.current) {
+        logVerification(`▶ Executing via real browser: ${task.description}`)
+        try {
+          let result: any
+          if (task.action === 'navigate') {
+            const navUrl = task.payload?.url || task.payload?.value || task.payload?.selector || ''
+            logVerification(`🌐 Navigating to ${navUrl}`)
+            result = await browserApi.navigate(navUrl)
+          } else if (task.action === 'dom_click') {
+            logVerification(`🖱 Click: ${task.payload?.selector}`)
+            result = await browserApi.action({ type: 'click', selector: task.payload?.selector })
+          } else if (task.action === 'dom_type') {
+            logVerification(`⌨ Type "${task.payload?.value}" → ${task.payload?.selector}`)
+            result = await browserApi.action({ type: 'type', selector: task.payload?.selector, value: task.payload?.value ?? '' })
+          } else if (task.action === 'dom_press_enter' || task.action === 'press_enter') {
+            logVerification(`↩ Press Enter: ${task.payload?.selector || 'active element'}`)
+            result = await browserApi.action({ type: 'press_enter', selector: task.payload?.selector })
+          } else if (task.action === 'scroll') {
+            logVerification(`↕ Scroll: ${task.payload?.deltaY ?? 400}px`)
+            result = await browserApi.action({ type: 'scroll', deltaY: task.payload?.deltaY ?? 400 })
+          } else if (task.action === 'search') {
+            logVerification(`🔍 Search: "${task.payload?.value}" on ${task.payload?.selector}`)
+            result = await browserApi.action({ type: 'search', selector: task.payload?.selector, value: task.payload?.value ?? '' })
+          } else {
+            logVerification(`✓ ${task.action}: ${task.description}`)
+            result = { ok: true }
+          }
+
+          const succeeded = result?.ok !== false
+          const actionVerb = task.action === 'dom_click' ? 'Clicked'
+            : task.action === 'dom_type' ? 'Typed into'
+            : task.action === 'dom_press_enter' || task.action === 'press_enter' ? 'Pressed Enter'
+            : task.action === 'navigate' ? 'Navigated to'
+            : task.action === 'scroll' ? 'Scrolled'
+            : task.action
+
+          if (succeeded) {
+            logVerification(`✓ ${actionVerb}: ${task.description}`)
+            setMessages(prev => [...prev, { role: 'agent', message: `✅ ${actionVerb}: ${task.description}` }])
+            return { status: 'success', retries: 0 }
+          } else {
+            logVerification(`⚠ Action error: ${result?.error || 'unknown'}`)
+            setMessages(prev => [...prev, { role: 'agent', message: `⚠️ ${task.description}: ${result?.error || 'action failed'}` }])
+            return { status: 'error', reason: result?.error }
+          }
+        } catch (err: any) {
+          logVerification(`✗ Browser error: ${err.message}`)
+          setMessages(prev => [...prev, { role: 'agent', message: `⚠️ Browser error: ${err.message}` }])
+          return { status: 'error', reason: err.message }
+        }
+      }
+
+      // ── FALLBACK: Proxy iframe + heuristic validation ──────────────────
       const iframe = webviewRef.current as HTMLIFrameElement | null
       const isLive = proxyElementsRef.current.length > 0
 
@@ -1402,7 +1565,6 @@ ${currentInput}`
             logVerification(`🔄 Retry ${attempt}/${MAX_RETRIES} — waiting ${RETRY_DELAYS[attempt - 1]}ms...`)
             onRetry?.(attempt, retryReason)
             await sleep(RETRY_DELAYS[attempt - 1])
-
             if (iframe?.contentWindow) {
               iframe.contentWindow.postMessage({ type: 'yogi-dom-request' }, '*')
               await sleep(600)
@@ -1421,87 +1583,20 @@ ${currentInput}`
               }
             }
           }
-
           if (task.action === 'dom_click') {
             iframe.contentWindow!.postMessage({ type: 'yogi-click', selector: currentSelector }, '*')
           } else if (task.action === 'dom_type') {
-            const typeValue = task.payload?.value ?? ''
-            iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: currentSelector, value: typeValue }, '*')
-            // Direct-navigation fallback for search engines — fires 1.5s after type so bridge script's own
-            // form-submit fires first; we only navigate directly if the bridge didn't trigger a yogi-navigate
-            if (typeValue) {
-              const rawUrl = inputUrl.replace(/^https?:\/\//, '').split('?')[0]
-              const isSearchSel = currentSelector.toLowerCase().includes('search') || currentSelector.includes('[name="q"]')
-              const isSearchDesc = (task.description || '').toLowerCase().includes('search') || (task.description || '').toLowerCase().includes('query')
-              if (isSearchSel || isSearchDesc) {
-                if (rawUrl.includes('google.com')) {
-                  setTimeout(() => {
-                    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(typeValue)}`
-                    setUrl(proxyUrl(searchUrl))
-                    setInputUrl(searchUrl)
-                    if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
-                  }, 1500)
-                } else if (rawUrl.includes('bing.com')) {
-                  setTimeout(() => {
-                    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(typeValue)}`
-                    setUrl(proxyUrl(searchUrl))
-                    setInputUrl(searchUrl)
-                    if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
-                  }, 1500)
-                } else if (rawUrl.includes('duckduckgo.com')) {
-                  setTimeout(() => {
-                    const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(typeValue)}`
-                    setUrl(proxyUrl(searchUrl))
-                    setInputUrl(searchUrl)
-                    if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
-                  }, 1500)
-                }
-              }
-            }
+            iframe.contentWindow!.postMessage({ type: 'yogi-type', selector: currentSelector, value: task.payload?.value ?? '' }, '*')
           } else if (task.action === 'dom_press_enter') {
             iframe.contentWindow!.postMessage({ type: 'yogi-press-enter', selector: currentSelector }, '*')
-            // Direct-navigation fallback: if pressing Enter on a search field,
-            // build the search URL ourselves and navigate through the proxy
-            const searchValue = task.payload?.value ?? ''
-            if (searchValue) {
-              const currentRawUrl = inputUrl.replace(/^https?:\/\//, '').split('?')[0]
-              const isGoogleSearch = currentRawUrl.includes('google.com')
-              const isBingSearch = currentRawUrl.includes('bing.com')
-              const isDDGSearch = currentRawUrl.includes('duckduckgo.com')
-              if (isGoogleSearch) {
-                setTimeout(() => {
-                  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchValue)}`
-                  setUrl(proxyUrl(searchUrl))
-                  setInputUrl(searchUrl)
-                  if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
-                }, 1200)
-              } else if (isBingSearch) {
-                setTimeout(() => {
-                  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchValue)}`
-                  setUrl(proxyUrl(searchUrl))
-                  setInputUrl(searchUrl)
-                  if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
-                }, 1200)
-              } else if (isDDGSearch) {
-                setTimeout(() => {
-                  const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(searchValue)}`
-                  setUrl(proxyUrl(searchUrl))
-                  setInputUrl(searchUrl)
-                  if (webviewRef.current) (webviewRef.current as any).src = proxyUrl(searchUrl)
-                }, 1200)
-              }
-            }
           }
-
           await waitForWebStability()
-
           const afterSnapshot = captureWebSnapshot()
           lastResult = validateWebAction(
             { action: task.action, selector: task.payload?.selector, value: task.payload?.value },
             beforeSnapshot,
             afterSnapshot
           )
-
           if (lastResult.status === 'success') {
             logVerification(`✓ Verified: ${lastResult.reason} (confidence: ${lastResult.confidence}%)`)
             setMessages(prev => [...prev, {
@@ -1510,10 +1605,8 @@ ${currentInput}`
             }])
             return { status: 'success', retries: attempt }
           }
-
           logVerification(`✗ Verification failed: ${lastResult.reason}`)
         }
-
         logVerification(`⚠ ESCALATE: ${lastResult.reason} — needs human help`)
         const escMsg = `Action failed after ${MAX_RETRIES} retries: ${task.description}. ${lastResult.reason}`
         setNotification({ message: escMsg, type: 'alert' })
@@ -1906,16 +1999,15 @@ ${currentInput}`
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     let targetUrl = inputUrl.trim()
-    // Empty bar → go home
-    if (!targetUrl) {
-      goHome()
-      return
-    }
+    if (!targetUrl) { goHome(); return }
     if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`
     setInputUrl(targetUrl)
     if (isElectron) {
       setUrl(targetUrl)
       ;(window as any).yogi?.browserNavigate(targetUrl)
+    } else if (browserServerReadyRef.current) {
+      setIsThinking(true)
+      browserApi.navigate(targetUrl).finally(() => setIsThinking(false))
     } else {
       const next = proxyUrl(targetUrl)
       setUrl(next)
@@ -1928,6 +2020,8 @@ ${currentInput}`
   const goBack = () => {
     if (isElectron) {
       ;(window as any).yogi?.browserBack()
+    } else if (browserServerReadyRef.current) {
+      browserApi.action({ type: 'click', x: -1, y: -1 })
     } else {
       webviewRef.current?.contentWindow?.history.back()
     }
@@ -1944,6 +2038,9 @@ ${currentInput}`
   const reload = () => {
     if (isElectron) {
       ;(window as any).yogi?.browserReload()
+    } else if (browserServerReadyRef.current) {
+      setIsThinking(true)
+      browserApi.navigate(inputUrl).finally(() => setIsThinking(false))
     } else {
       const iframe = webviewRef.current as HTMLIFrameElement
       if (iframe) iframe.src = iframe.src
@@ -2225,6 +2322,22 @@ ${currentInput}`
             <button onClick={goForward} className="nav-btn" title="Forward"><ChevronRight size={20} /></button>
             <button onClick={reload} className="nav-btn" title="Reload"><RotateCw size={18} /></button>
             <button onClick={goHome} className="nav-btn" title="Home"><Home size={17} /></button>
+            {!isElectron && (
+              <div
+                title={browserServerReady ? 'Real browser (Playwright) connected' : 'Connecting to browser server…'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px',
+                  borderRadius: 5, fontSize: 10, fontWeight: 700,
+                  background: browserServerReady ? 'rgba(16,185,129,0.15)' : 'rgba(100,100,120,0.12)',
+                  color: browserServerReady ? '#10b981' : 'var(--text-dim)',
+                  border: `1px solid ${browserServerReady ? 'rgba(16,185,129,0.3)' : 'rgba(100,100,120,0.2)'}`,
+                  whiteSpace: 'nowrap', cursor: 'default',
+                }}
+              >
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: browserServerReady ? '#10b981' : '#555', display: 'inline-block', flexShrink: 0 }} />
+                {browserServerReady ? 'LIVE' : 'PROXY'}
+              </div>
+            )}
           </div>
           <form className="address-bar-container" onSubmit={handleUrlSubmit}>
             <input
@@ -2237,12 +2350,32 @@ ${currentInput}`
 
         <div className="browser-viewport" ref={viewportRef}>
           {isElectron ? (
-            // Electron: BrowserView rendered by the main process at these bounds.
-            // This div is a transparent placeholder — the main process positions
-            // the BrowserView to exactly cover it (including start.html for home).
             null
+          ) : browserServerReady && browserScreenshot ? (
+            // Real Playwright screenshot — agent sees and interacts with this
+            <div style={{ width: '100%', height: '100%', position: 'relative', background: '#fff', overflow: 'hidden' }}>
+              <img
+                src={`data:image/jpeg;base64,${browserScreenshot}`}
+                alt="Live browser"
+                style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'top left', display: 'block' }}
+              />
+              <div style={{
+                position: 'absolute', top: 8, right: 10, background: 'rgba(16,185,129,0.92)',
+                color: '#fff', fontSize: '10px', fontWeight: 700, padding: '3px 8px',
+                borderRadius: '6px', letterSpacing: '0.5px', pointerEvents: 'none',
+              }}>
+                🟢 LIVE BROWSER
+              </div>
+            </div>
+          ) : browserServerReady && !browserScreenshot ? (
+            // Server ready but no page navigated yet — show home
+            <BrowserHomePage onNavigate={(target) => {
+              setInputUrl(target)
+              setIsThinking(true)
+              browserApi.navigate(target).finally(() => setIsThinking(false))
+            }} />
           ) : url === HOME_URL ? (
-            // Web preview + home sentinel: show the React home page component
+            // Proxy fallback: home page
             <BrowserHomePage onNavigate={(target) => {
               setInputUrl(target)
               const next = proxyUrl(target)
@@ -2252,7 +2385,7 @@ ${currentInput}`
               if (webviewRef.current) webviewRef.current.src = next
             }} />
           ) : (
-            // Web preview: regular iframe
+            // Proxy fallback: regular iframe
             <iframe
               ref={webviewRef}
               src={url}
@@ -2261,7 +2394,6 @@ ${currentInput}`
               sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-modals"
               referrerPolicy="no-referrer-when-downgrade"
               onLoad={() => {
-                // Request DOM state from the newly loaded page
                 setTimeout(() => {
                   webviewRef.current?.contentWindow?.postMessage({ type: 'yogi-dom-request' }, '*')
                 }, 800)
