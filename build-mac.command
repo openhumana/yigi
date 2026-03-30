@@ -28,7 +28,7 @@ echo "✅ Node.js found: $(node --version)"
 echo ""
 
 # Ask for Groq API key
-echo "Your Groq API key is needed to embed into the app."
+echo "Your Groq API key will be embedded into the app."
 echo "Get one free at: https://console.groq.com"
 echo ""
 read -p "Paste your Groq API key (starts with gsk_): " GROQ_KEY
@@ -58,9 +58,7 @@ echo ""
 DEFAULT_GROQ_KEY="$GROQ_KEY" npm run electron:build:mac
 if [ $? -ne 0 ]; then
   echo ""
-  echo "❌ Build failed."
-  echo "Common fix: run this once in Terminal and try again:"
-  echo "  sudo npm install -g electron-builder"
+  echo "❌ Build failed. Please copy the error above and share it."
   read -p "Press Enter to close..."
   exit 1
 fi
@@ -71,13 +69,13 @@ echo "  ✅ Build Complete!"
 echo "====================================="
 echo ""
 echo "Your app is in the 'build' folder."
-echo "Look for: YogiBrowser-Mac-1.0.0.dmg"
+echo "Look for: YogiBrowser-Mac-1.0.0-*.zip"
 echo ""
 echo "To install:"
-echo "  1. Open the 'build' folder"
-echo "  2. Double-click the .dmg file"
-echo "  3. Drag Yogi Browser to Applications"
-echo "  4. Open it from your Applications folder"
+echo "  1. Open the 'build' folder (opening now...)"
+echo "  2. Double-click the .zip file to extract it"
+echo "  3. Move 'Yogi Browser.app' to your Applications folder"
+echo "  4. Right-click it → Open → Open (to bypass Mac security)"
 echo ""
 
 # Open the build folder
