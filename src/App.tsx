@@ -169,10 +169,15 @@ const App = () => {
   const [isResizing, setIsResizing] = useState(false)
 
   // Browser state
-  // In web mode we load a local mock page (external sites block iframes)
-  const mockPageUrl = (wf: string) => `/mock-browser.html?workflow=${wf}`
-  const [url, setUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : mockPageUrl('reddit_post'))
-  const [inputUrl, setInputUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : 'reddit.com/r/sales/')
+  // In web mode all pages go through the /__proxy endpoint (strips X-Frame-Options)
+  const proxyUrl = (target: string) => `/__proxy?url=${encodeURIComponent(target)}`
+  const DEFAULT_URL = 'https://www.google.com'
+  const [url, setUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : proxyUrl(DEFAULT_URL))
+  const [inputUrl, setInputUrl] = useState(isElectron ? 'https://www.reddit.com/r/sales/' : DEFAULT_URL)
+
+  // Real DOM elements reported by the Yogi bridge script inside the proxy iframe
+  const proxyElementsRef = useRef<any[]>([])
+  const [proxyElements, setProxyElements] = useState<any[]>([])
 
   const webviewRef = useRef<any>(null)
   const sidebarRef = useRef<any>(null)
@@ -268,20 +273,37 @@ const App = () => {
     }
   }, [messages, isThinking])
 
-  // ── In web mode: sync iframe to mock page when workflow changes ─────
-  const WORKFLOW_DISPLAY_URLS: Record<string, string> = {
-    reddit_post:  'reddit.com/r/sales/',
-    reddit_reply: 'reddit.com/r/sales/comments/demo',
-    linkedin:     'linkedin.com/feed/',
-  }
+  // ── In web mode: handle messages from the Yogi bridge inside the proxy iframe ─
   useEffect(() => {
-    if (!isElectron) {
-      const next = mockPageUrl(workflow)
-      setUrl(next)
-      setInputUrl(WORKFLOW_DISPLAY_URLS[workflow] ?? next)
-      if (webviewRef.current) webviewRef.current.src = next
+    if (isElectron) return
+    const handleMessage = (e: MessageEvent) => {
+      if (!e.data?.type) return
+      if (e.data.type === 'yogi-dom') {
+        const els = e.data.elements || []
+        proxyElementsRef.current = els
+        setProxyElements(els)
+        if (e.data.url) {
+          // location.href inside the proxy iframe is the proxy URL —
+          // extract the real target URL from the ?url= parameter
+          try {
+            const parsed = new URL(e.data.url)
+            const realUrl = parsed.searchParams.get('url')
+            setInputUrl(realUrl || e.data.url)
+          } catch {
+            setInputUrl(e.data.url)
+          }
+        }
+      }
+      if (e.data.type === 'yogi-navigate') {
+        const next = proxyUrl(e.data.url)
+        setUrl(next)
+        setInputUrl(e.data.url)
+        if (webviewRef.current) webviewRef.current.src = next
+      }
     }
-  }, [workflow])
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
 
   // ── Webview navigation events (Electron only) ───────────
   useEffect(() => {
@@ -319,8 +341,7 @@ const App = () => {
 
     try {
       if (!isElectron) {
-        // ── MOCK MODE: full simulated pipeline (web preview) ──────────────
-        // Helper: update both the transient status bubble AND the persistent drawer log
+        // ── WEB MODE: proxy browser + simulated AI pipeline ───────────────
         const logStep = (msg: string) => {
           setThinkingLog(msg)
           setThinkingLogs(prev => {
@@ -330,11 +351,20 @@ const App = () => {
           })
         }
 
+        // Request fresh DOM from proxy iframe, then wait for it to arrive
+        if (webviewRef.current?.contentWindow) {
+          webviewRef.current.contentWindow.postMessage({ type: 'yogi-dom-request' }, '*')
+        }
         logStep('Scanning page for interactive elements...')
-        await sleep(600)
+        await sleep(800)
 
-        const elements = mockBrowserState(workflow)
-        logStep(`Found ${elements.length} interactive elements on page`)
+        // Use real proxy elements if available, else fall back to mock map
+        const elements = proxyElementsRef.current.length > 0
+          ? proxyElementsRef.current
+          : mockBrowserState(workflow)
+        const isLive = proxyElementsRef.current.length > 0
+
+        logStep(`Found ${elements.length} interactive elements on ${isLive ? 'live page' : 'mock page'}`)
         await sleep(600)
 
         logStep('Analyzing page structure and mapping selectors...')
@@ -435,13 +465,25 @@ ${currentInput}`
     setTasks(prev => prev.filter(t => t.id !== id))
 
     if (!isElectron) {
-      const actionLabel = task.action === 'dom_type'
-        ? `TYPE "${task.payload?.value?.slice(0, 40) ?? ''}" into ${task.payload?.selector}`
-        : `CLICK ${task.payload?.selector}`
-      setMessages(prev => [...prev, {
-        role: 'agent',
-        message: `✅ Simulated: ${actionLabel}`
-      }])
+      const iframe = webviewRef.current as HTMLIFrameElement | null
+      const isLive = proxyElementsRef.current.length > 0
+
+      if (isLive && iframe?.contentWindow) {
+        // Execute the action for real on the proxied page via postMessage
+        if (task.action === 'dom_click') {
+          iframe.contentWindow.postMessage({ type: 'yogi-click', selector: task.payload?.selector }, '*')
+          setMessages(prev => [...prev, { role: 'agent', message: `🖱️ Clicked: ${task.payload?.selector}` }])
+        } else if (task.action === 'dom_type') {
+          iframe.contentWindow.postMessage({ type: 'yogi-type', selector: task.payload?.selector, value: task.payload?.value ?? '' }, '*')
+          setMessages(prev => [...prev, { role: 'agent', message: `⌨️ Typed into: ${task.payload?.selector}` }])
+        }
+      } else {
+        // Mock page — just show confirmation
+        const actionLabel = task.action === 'dom_type'
+          ? `TYPE "${task.payload?.value?.slice(0, 40) ?? ''}" into ${task.payload?.selector}`
+          : `CLICK ${task.payload?.selector}`
+        setMessages(prev => [...prev, { role: 'agent', message: `✅ Simulated: ${actionLabel}` }])
+      }
       return
     }
 
@@ -487,11 +529,11 @@ ${currentInput}`
     if (isElectron && webviewRef.current) {
       webviewRef.current.loadURL(targetUrl)
     } else {
-      // In web mode, external URLs can't load in an iframe — stay on mock page
-      const next = mockPageUrl(workflow)
+      const next = proxyUrl(targetUrl)
       setUrl(next)
+      proxyElementsRef.current = []
+      setProxyElements([])
       if (webviewRef.current) webviewRef.current.src = next
-      setNotification({ message: `Web preview mode: showing mock ${workflow} page. Deploy to Electron to browse live sites.`, type: 'info' })
     }
   }
 
@@ -668,6 +710,12 @@ ${currentInput}`
               src={url}
               style={{ width: '100%', height: '100%', border: 'none' }}
               title="Yogi Browser Viewport"
+              onLoad={() => {
+                // Request DOM state from the newly loaded page
+                setTimeout(() => {
+                  webviewRef.current?.contentWindow?.postMessage({ type: 'yogi-dom-request' }, '*')
+                }, 800)
+              }}
             />
           )}
         </div>
