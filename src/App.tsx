@@ -279,15 +279,16 @@ const ChatBubble = ({ message, role, model }: { message: string, role: 'agent' |
 // ──────────────────────────────────────────────
 // ThinkingBlock: inline collapsible reasoning block
 // ──────────────────────────────────────────────
-const ThinkingBlock = ({ logs, logsStart, status, summary }: {
+const ThinkingBlock = ({ logs, logsStart, logsEnd, status, summary }: {
   logs: string[]
   logsStart: number
+  logsEnd?: number
   status: 'thinking' | 'done'
   summary?: string
 }) => {
   const [expanded, setExpanded] = useState(true)
   const logsRef = useRef<HTMLDivElement>(null)
-  const myLogs = logs.slice(logsStart)
+  const myLogs = logs.slice(logsStart, logsEnd)
 
   useEffect(() => {
     if (status === 'done') setExpanded(false)
@@ -1099,8 +1100,9 @@ const App = () => {
 
     // Helper to finalize the thinking block and push the agent response
     const finalizeThinking = (responseText: string, model?: string) => {
+      const logsEnd = thinkingLogsLenRef.current
       setMessages(prev => prev.map(m =>
-        m.id === thinkingId ? { ...m, status: 'done', summary: responseText } : m
+        m.id === thinkingId ? { ...m, status: 'done', summary: responseText, logsEnd } : m
       ))
       thinkingMsgIdRef.current = ''
       setMessages(prev => [...prev, {
@@ -2080,6 +2082,7 @@ ${currentInput}`
                       key={m.id || i}
                       logs={thinkingLogs}
                       logsStart={m.logsStart || 0}
+                      logsEnd={m.logsEnd}
                       status={m.status || 'thinking'}
                       summary={m.summary}
                     />
