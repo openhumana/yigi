@@ -90,6 +90,9 @@ async function createWindow() {
     win.loadURL(fileUrl)
   }
 
+  // Maximize on startup so users get a full-screen experience
+  win.maximize()
+
   win.webContents.on('did-finish-load', () => {
     win?.webContents.send('main-process-message', new Date().toLocaleString())
   })

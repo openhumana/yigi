@@ -1816,7 +1816,7 @@ ${currentInput}`
               src={url}
               webpreferences="nodeIntegration=no, contextIsolation=yes"
               allowpopups={true as any}
-              style={{ width: '100%', height: '100%' }}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
               useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
             />
           ) : (
