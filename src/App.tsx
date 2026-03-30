@@ -280,22 +280,32 @@ const App = () => {
     try {
       if (!isElectron) {
         // ── MOCK MODE: full simulated pipeline (web preview) ──────────────
-        setThinkingLog('Scanning page for interactive elements...')
+        // Helper: update both the transient status bubble AND the persistent drawer log
+        const logStep = (msg: string) => {
+          setThinkingLog(msg)
+          setThinkingLogs(prev => {
+            const updated = [...prev, msg]
+            localStorage.setItem('thinkingLogs', JSON.stringify(updated.slice(-100)))
+            return updated
+          })
+        }
+
+        logStep('Scanning page for interactive elements...')
         await sleep(600)
 
         const elements = mockBrowserState(workflow)
-        setThinkingLog(`Found ${elements.length} interactive elements on page`)
+        logStep(`Found ${elements.length} interactive elements on page`)
         await sleep(600)
 
-        setThinkingLog('Analyzing page structure...')
+        logStep('Analyzing page structure and mapping selectors...')
         await sleep(600)
 
-        setThinkingLog('Sending context to AI brain...')
+        logStep('Sending context to AI brain...')
         await sleep(400)
 
         const res = await mockAIResponse(currentInput, workflow, elements)
 
-        setThinkingLog('Generating task queue...')
+        logStep(`Generating task queue — ${res.tasks.length} action(s) planned`)
         await sleep(300)
 
         setMessages(prev => [...prev, { role: 'agent', message: res.thought }])
