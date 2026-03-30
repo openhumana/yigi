@@ -85,6 +85,32 @@ const yogi = {
 
   injectSkills: (content: string) =>
     ipcRenderer.invoke('inject-skills', { content }),
+
+  // BrowserView: main-process owned browser panel
+  browserNavigate: (url: string) =>
+    ipcRenderer.invoke('browser-navigate', { url }),
+
+  browserSetBounds: (x: number, y: number, width: number, height: number) =>
+    ipcRenderer.invoke('browser-set-bounds', { x, y, width, height }),
+
+  browserBack: () =>
+    ipcRenderer.invoke('browser-back'),
+
+  browserForward: () =>
+    ipcRenderer.invoke('browser-forward'),
+
+  browserReload: () =>
+    ipcRenderer.invoke('browser-reload'),
+
+  onBrowserUrlChanged: (callback: (url: string) => void) => {
+    ipcRenderer.removeAllListeners('browser-url-changed')
+    ipcRenderer.on('browser-url-changed', (_: any, url: string) => callback(url))
+  },
+
+  onBrowserLoadFailed: (callback: (data: { errorCode: number; errorDescription: string }) => void) => {
+    ipcRenderer.removeAllListeners('browser-load-failed')
+    ipcRenderer.on('browser-load-failed', (_: any, data: any) => callback(data))
+  },
 }
 
 // 🟢 THE FIX: Use both methods for maximum reliability

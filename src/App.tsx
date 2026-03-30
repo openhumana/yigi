@@ -334,6 +334,7 @@ const App = () => {
   }, [])
 
   const webviewRef = useRef<any>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<any>(null)
   const chatFeedRef = useRef<any>(null)
 
@@ -368,6 +369,82 @@ const App = () => {
       window.removeEventListener('mouseup', stopResizing)
     }
   }, [isResizing, resize, stopResizing])
+
+  // ── BrowserView: send pixel bounds to main process ──────────────────────
+  // BrowserView is positioned by the main process so Chromium always gets the
+  // exact viewport size — no CSS-to-compositor ambiguity.
+  useEffect(() => {
+    if (!isElectron) return
+    const yogi = (window as any).yogi
+    if (!yogi?.browserSetBounds) return
+
+    const sendBounds = () => {
+      const el = viewportRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      if (r.width > 0 && r.height > 0) {
+        yogi.browserSetBounds(Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height))
+      }
+    }
+
+    const ro = new ResizeObserver(sendBounds)
+    if (viewportRef.current) ro.observe(viewportRef.current)
+    // Also re-send on window resize (covers maximize/restore)
+    window.addEventListener('resize', sendBounds)
+    // Initial send with a short delay to let layout settle after maximize
+    sendBounds()
+    const t = setTimeout(sendBounds, 200)
+
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', sendBounds)
+      clearTimeout(t)
+    }
+  }, [isElectron])
+
+  // ── BrowserView: listen for URL/load events from main process ────────────
+  useEffect(() => {
+    if (!isElectron) return
+    const yogi = (window as any).yogi
+    yogi?.onBrowserUrlChanged?.((newUrl: string) => {
+      setUrl(newUrl)
+      setInputUrl(newUrl)
+    })
+    yogi?.onBrowserLoadFailed?.((data: any) => {
+      if (data.errorCode !== -3) {
+        setNotification({ message: `Browser error: ${data.errorDescription}`, type: 'alert' })
+      }
+    })
+  }, [isElectron])
+
+  // ── BrowserView: initial page load ──────────────────────────────────────
+  useEffect(() => {
+    if (!isElectron) return
+    const yogi = (window as any).yogi
+    if (yogi?.browserNavigate) {
+      yogi.browserNavigate('https://www.reddit.com/r/sales/')
+    }
+  }, [isElectron])
+
+  // ── BrowserView: hide when modal is open ────────────────────────────────
+  useEffect(() => {
+    if (!isElectron) return
+    const yogi = (window as any).yogi
+    if (!yogi?.browserSetBounds) return
+    if (showSettings) {
+      // Push off-screen so the modal is not obscured
+      yogi.browserSetBounds(0, 0, 0, 0)
+    } else {
+      // Restore by re-sending the current bounds
+      const el = viewportRef.current
+      if (el) {
+        const r = el.getBoundingClientRect()
+        if (r.width > 0 && r.height > 0) {
+          yogi.browserSetBounds(Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height))
+        }
+      }
+    }
+  }, [isElectron, showSettings])
 
   // ── Settings ────────────────────────────────────────────
   useEffect(() => {
@@ -616,8 +693,8 @@ const App = () => {
     getBrowserUrl: () => inputUrl,
     getBrowserElements: () => cachedBrowserElementsRef.current,
     navigateTo: (targetUrl: string) => {
-      if (isElectron && webviewRef.current) {
-        webviewRef.current.loadURL(targetUrl)
+      if (isElectron) {
+        ;(window as any).yogi?.browserNavigate(targetUrl)
       } else {
         const next = proxyUrl(targetUrl)
         setUrl(next)
@@ -764,29 +841,6 @@ const App = () => {
     return () => window.removeEventListener('message', handleMessage)
   }, [])
 
-  // ── Webview navigation events (Electron only) ───────────
-  useEffect(() => {
-    const webview = webviewRef.current
-    if (!webview || !isElectron) return
-
-    const handleNavigate = (event: any) => {
-      setUrl(event.url)
-      setInputUrl(event.url)
-    }
-    const handleFailLoad = (e: any) => {
-      setNotification({ message: `Browser Error: ${e.errorDescription}`, type: 'alert' })
-    }
-
-    webview.addEventListener('did-navigate', handleNavigate)
-    webview.addEventListener('did-navigate-in-page', handleNavigate)
-    webview.addEventListener('did-fail-load', handleFailLoad)
-
-    return () => {
-      webview.removeEventListener('did-navigate', handleNavigate)
-      webview.removeEventListener('did-navigate-in-page', handleNavigate)
-      webview.removeEventListener('did-fail-load', handleFailLoad)
-    }
-  }, [])
 
   // ── Main chat handler ────────────────────────────────────
   const handleSend = async () => {
@@ -1293,8 +1347,8 @@ ${currentInput}`
         return { status: 'escalated', retries: MAX_RETRIES, reason: lastValidation.reason }
       } else if (task.action === 'navigate') {
         const targetUrl = task.payload.url
-        if (webviewRef.current && isElectron) {
-          webviewRef.current.loadURL(targetUrl)
+        if (isElectron) {
+          ;(window as any).yogi?.browserNavigate(targetUrl)
         }
         setUrl(targetUrl)
         setInputUrl(targetUrl)
@@ -1485,8 +1539,8 @@ ${currentInput}`
     let targetUrl = inputUrl.trim()
     if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`
     setInputUrl(targetUrl)
-    if (isElectron && webviewRef.current) {
-      webviewRef.current.loadURL(targetUrl)
+    if (isElectron) {
+      ;(window as any).yogi?.browserNavigate(targetUrl)
     } else {
       const next = proxyUrl(targetUrl)
       setUrl(next)
@@ -1497,31 +1551,27 @@ ${currentInput}`
   }
 
   const goBack = () => {
-    if (!webviewRef.current) return
     if (isElectron) {
-      webviewRef.current.canGoBack() && webviewRef.current.goBack()
+      ;(window as any).yogi?.browserBack()
     } else {
-      webviewRef.current.contentWindow?.history.back()
+      webviewRef.current?.contentWindow?.history.back()
     }
   }
 
   const goForward = () => {
-    if (!webviewRef.current) return
     if (isElectron) {
-      webviewRef.current.canGoForward() && webviewRef.current.goForward()
+      ;(window as any).yogi?.browserForward()
     } else {
-      webviewRef.current.contentWindow?.history.forward()
+      webviewRef.current?.contentWindow?.history.forward()
     }
   }
 
   const reload = () => {
-    if (!webviewRef.current) return
     if (isElectron) {
-      webviewRef.current.reload()
+      ;(window as any).yogi?.browserReload()
     } else {
-      // contentWindow.location is cross-origin blocked; reassigning src reloads safely
       const iframe = webviewRef.current as HTMLIFrameElement
-      iframe.src = iframe.src
+      if (iframe) iframe.src = iframe.src
     }
   }
 
@@ -1808,17 +1858,12 @@ ${currentInput}`
           </form>
         </div>
 
-        <div className="browser-viewport">
+        <div className="browser-viewport" ref={viewportRef}>
           {isElectron ? (
-            // Electron: native webview tag with full access to webContents
-            <webview
-              ref={webviewRef}
-              src={url}
-              webpreferences="nodeIntegration=no, contextIsolation=yes"
-              allowpopups={true as any}
-              style={{ width: '100%', height: '100%', border: 'none' }}
-              useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-            />
+            // Electron: BrowserView rendered by the main process at these bounds.
+            // This div is a transparent placeholder — the main process positions
+            // the BrowserView to exactly cover it. No <webview> tag needed.
+            null
           ) : (
             // Web preview: regular iframe
             <iframe

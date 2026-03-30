@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { app, BrowserWindow, shell, ipcMain, NativeImage, Notification, session } from 'electron'
+import { app, BrowserWindow, BrowserView, shell, ipcMain, NativeImage, Notification, session } from 'electron'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import fs from 'fs'
@@ -35,6 +35,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win: BrowserWindow | null = null
+let browserView: BrowserView | null = null
+let pendingBounds: { x: number; y: number; width: number; height: number } | null = null
 const preloadPath = join(__dirname, '../preload/index.js')
 
 const url = process.env.VITE_DEV_SERVER_URL
@@ -100,6 +102,12 @@ async function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https:')) shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  win.on('closed', () => {
+    browserView = null
+    pendingBounds = null
+    win = null
   })
 }
 
@@ -306,8 +314,87 @@ ipcMain.handle('save-settings', (_, settings) => {
   return { status: 'success' }
 })
 
+// ── BrowserView: main-process owned browser panel ────────────────────────
+// Using BrowserView instead of <webview> tag guarantees Chromium always gets
+// the correct viewport size because bounds are set explicitly from the main
+// process, bypassing any CSS-to-compositor translation issues.
+
+function applyBrowserBounds(bounds: { x: number; y: number; width: number; height: number }) {
+  if (!browserView) return
+  const w = Math.max(1, Math.round(bounds.width))
+  const h = Math.max(1, Math.round(bounds.height))
+  browserView.setBounds({ x: Math.round(bounds.x), y: Math.round(bounds.y), width: w, height: h })
+}
+
+ipcMain.handle('browser-navigate', (_, { url: targetUrl }: { url: string }) => {
+  if (!win) return
+  if (!browserView) {
+    browserView = new BrowserView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        webSecurity: false,
+        allowRunningInsecureContent: true,
+        spellcheck: false,
+      },
+    })
+    win.addBrowserView(browserView)
+    browserView.webContents.session.setPermissionRequestHandler((_wc, _perm, callback) => callback(true))
+    browserView.webContents.on('did-navigate', (_e: any, navigatedUrl: string) => {
+      win?.webContents.send('browser-url-changed', navigatedUrl)
+    })
+    browserView.webContents.on('did-navigate-in-page', (_e: any, navigatedUrl: string) => {
+      win?.webContents.send('browser-url-changed', navigatedUrl)
+    })
+    browserView.webContents.on('did-fail-load', (_e: any, code: number, desc: string) => {
+      if (code !== -3) {
+        win?.webContents.send('browser-load-failed', { errorCode: code, errorDescription: desc })
+      }
+    })
+    // Apply any bounds that arrived before the BrowserView was created
+    if (pendingBounds) {
+      applyBrowserBounds(pendingBounds)
+      pendingBounds = null
+    }
+  }
+  browserView.webContents.loadURL(targetUrl, {
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  })
+})
+
+ipcMain.handle('browser-set-bounds', (_, { x, y, width, height }: { x: number; y: number; width: number; height: number }) => {
+  if (!win) return
+  const bounds = { x, y, width, height }
+  if (!browserView) {
+    // BrowserView not yet created — store and apply once browser-navigate fires
+    pendingBounds = bounds
+    return
+  }
+  if (width === 0 || height === 0) {
+    // Hide by pushing off screen
+    browserView.setBounds({ x: -10000, y: -10000, width: 100, height: 100 })
+  } else {
+    applyBrowserBounds(bounds)
+  }
+})
+
+ipcMain.handle('browser-back', () => {
+  if (browserView?.webContents.canGoBack()) browserView.webContents.goBack()
+})
+
+ipcMain.handle('browser-forward', () => {
+  if (browserView?.webContents.canGoForward()) browserView.webContents.goForward()
+})
+
+ipcMain.handle('browser-reload', () => {
+  browserView?.webContents.reload()
+})
+
 // ── Helper: find the active webview WebContents ──────────────────────────
 function getWebview() {
+  // Prefer the BrowserView (new approach)
+  if (browserView) return browserView.webContents
+  // Fallback: legacy <webview> tag (should not be used anymore)
   const { webContents } = require('electron')
   const allWc = webContents.getAllWebContents()
   return allWc.find((wc: any) => wc.getType() === 'webview') || null
