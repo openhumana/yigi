@@ -2054,6 +2054,7 @@ ${currentInput}`
                 />
                 {isElectron && (
                   <button
+                    type="button"
                     className="approve-btn"
                     style={{ marginTop: '6px', fontSize: '11px', padding: '5px 12px', opacity: geminiKeyStatus === 'testing' ? 0.6 : 1 }}
                     disabled={geminiKeyStatus === 'testing' || !settings.GOOGLE_KEYS}
@@ -2093,6 +2094,7 @@ ${currentInput}`
                   <span>Usage Stats</span>
                   {isElectron && (
                     <button
+                      type="button"
                       className="approve-btn"
                       style={{ fontSize: '10px', padding: '3px 8px' }}
                       onClick={async () => {
