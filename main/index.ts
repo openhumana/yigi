@@ -69,7 +69,34 @@ async function createWindow() {
   })
 }
 
-app.whenReady().then(createWindow)
+// ── Default API key seeding ───────────────────────────────────────────────
+// If no keys are saved yet, use the default key compiled in at build time.
+// Set DEFAULT_GROQ_KEY env var before running `npm run electron:build`.
+function seedDefaultKeys() {
+  const DEFAULT_GROQ  = (process.env.DEFAULT_GROQ_KEY  || '').trim()
+  const DEFAULT_OAI   = (process.env.DEFAULT_OPENAI_KEY || '').trim()
+  const DEFAULT_GMN   = (process.env.DEFAULT_GOOGLE_KEY || '').trim()
+
+  if (DEFAULT_GROQ && !orchestrator.store.get('GROQ_KEYS')) {
+    orchestrator.store.set('GROQ_KEYS', DEFAULT_GROQ)
+    console.log('[Keys] Seeded default Groq key from build config')
+  }
+  if (DEFAULT_OAI && !orchestrator.store.get('OPENAI_KEYS')) {
+    orchestrator.store.set('OPENAI_KEYS', DEFAULT_OAI)
+    console.log('[Keys] Seeded default OpenAI key from build config')
+  }
+  if (DEFAULT_GMN && !orchestrator.store.get('GOOGLE_KEYS')) {
+    orchestrator.store.set('GOOGLE_KEYS', DEFAULT_GMN)
+    console.log('[Keys] Seeded default Google key from build config')
+  }
+
+  orchestrator.initProviders()
+}
+
+app.whenReady().then(() => {
+  seedDefaultKeys()
+  createWindow()
+})
 
 app.on('window-all-closed', () => {
   win = null

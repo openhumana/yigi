@@ -1,5 +1,6 @@
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai'
 import { ChatOpenAI } from '@langchain/openai'
+import { ChatGroq } from '@langchain/groq'
 import { HumanMessage } from '@langchain/core/messages'
 import Store from 'electron-store'
 
@@ -19,6 +20,7 @@ export async function analyzeScreenshot(
   actionDescription?: string,
   expectedOutcome?: string
 ): Promise<VisionAnalysis> {
+  const groqKeys   = (store.get('GROQ_KEYS')   as string || '').split(/[\n,]/).map(k => k.trim()).filter(k => k.length > 5)
   const openaiKeys = (store.get('OPENAI_KEYS') as string || '').split(/[\n,]/).map(k => k.trim()).filter(k => k.length > 5)
   const googleKeys = (store.get('GOOGLE_KEYS') as string || '').split(/[\n,]/).map(k => k.trim()).filter(k => k.length > 5)
 
@@ -54,6 +56,21 @@ export async function analyzeScreenshot(
   const message = new HumanMessage({
     content: [textContent, imageContent],
   })
+
+  if (groqKeys.length > 0) {
+    try {
+      const model = new ChatGroq({
+        apiKey: groqKeys[0],
+        model: 'llama-3.2-11b-vision-preview',
+        temperature: 0.1,
+        maxTokens: 600,
+      })
+      const response = await model.invoke([message])
+      return parseVisionResponse(extractTextContent(response.content))
+    } catch (e: any) {
+      console.error('[Vision] Groq vision failed, trying fallback:', e.message)
+    }
+  }
 
   if (openaiKeys.length > 0) {
     try {
