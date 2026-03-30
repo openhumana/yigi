@@ -434,6 +434,11 @@ const App = () => {
   const autoPilotRef = useRef(false)
   const [escalation, setEscalation] = useState<{ message: string; taskId?: string } | null>(null)
 
+  // ── Reactive agent loop state ───────────────────────────
+  const agentGoalRef = useRef<string>('')
+  const agentHistoryRef = useRef<string[]>([])
+  const agentActiveRef = useRef<boolean>(false)
+
   const [sidePanel, setSidePanel] = useState<'chat' | 'missions' | 'skills' | 'activity'>('chat')
   const [missions, setMissions] = useState<Mission[]>([])
   const [skills, setSkills] = useState<Skill[]>([])
@@ -1214,14 +1219,16 @@ const App = () => {
         let elements: any[]
         let isLive: boolean
 
+        let pageState: any = null
+
         if (browserServerReadyRef.current) {
           // Real Playwright browser: get live screenshot + elements
-          logStep('📡 Connecting to real browser (Playwright)...')
+          logStep('📡 Observing real browser...')
           try {
-            const state = await browserApi.getState()
-            elements = state.elements || []
+            pageState = await browserApi.getState()
+            elements = pageState.elements || []
             isLive = true
-            logStep(`📸 Got live page — ${elements.length} interactive elements found`)
+            logStep(`📸 Page observed — ${elements.length} interactive elements visible`)
           } catch (e: any) {
             logStep(`⚠ Browser server error: ${e.message} — falling back to mock`)
             elements = mockBrowserState(workflow)
@@ -1238,26 +1245,42 @@ const App = () => {
           logStep(`Found ${elements.length} interactive elements on ${isLive ? 'live page' : 'mock page'}`)
         }
 
-        await sleep(400)
-
-        logStep('Analyzing page structure and mapping selectors...')
-        await sleep(600)
+        await sleep(300)
 
         if (browserServerReadyRef.current) {
-          // Real AI via browser server using Groq
-          logStep('Sending page context to Groq AI...')
+          // ── Reactive agent loop mode ──────────────────────────────────
+          // Activate loop: AI plans only 1-2 steps at a time, re-observes after each
+          agentGoalRef.current = currentInput
+          agentHistoryRef.current = []
+          agentActiveRef.current = true
+
+          logStep('🧠 Planning next step (reactive mode)...')
           const aiRes = await fetch('/api/browser/ai', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               userMessage: currentInput,
+              goal: currentInput,
               elements,
-              pageUrl: inputUrl,
+              pageUrl: pageState?.url || inputUrl,
+              pageTitle: pageState?.title || '',
+              history: [],
+              stepMode: true,
             }),
           }).then(r => r.json())
-          logStep(`Generated ${aiRes.tasks?.length ?? 0} action(s)`)
+          logStep(`Planning: ${aiRes.text?.slice(0, 60) || 'ready'}`)
           finalizeThinking(aiRes.text || 'Ready.', aiRes.model)
-          if (aiRes.tasks?.length > 0) pushPlan(aiRes.tasks)
+          if (aiRes.isDone) {
+            agentActiveRef.current = false
+            setMessages(prev => [...prev, {
+              id: `msg-${Date.now()}`,
+              type: 'message',
+              role: 'agent',
+              message: `✅ Done! ${aiRes.text || 'Goal accomplished.'}`,
+            }])
+          } else if (aiRes.tasks?.length > 0) {
+            pushPlan(aiRes.tasks)
+          }
         } else {
           logStep('Sending context to AI brain...')
           await sleep(400)
@@ -1766,6 +1789,68 @@ ${currentInput}`
     }
   }
 
+  // ── Reactive agent loop: after each task completes, re-observe + re-plan ──
+  const continueAgentLoop = useCallback(async (completedDesc: string) => {
+    if (!agentActiveRef.current) return
+    if (!browserServerReadyRef.current) return
+
+    agentHistoryRef.current = [...agentHistoryRef.current, completedDesc]
+
+    // Get fresh page state from real browser
+    let state: any
+    try {
+      state = await browserApi.getState()
+    } catch { return }
+
+    setThinkingLog('🔄 Observing page after action...')
+
+    try {
+      const aiRes = await fetch('/api/browser/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal: agentGoalRef.current,
+          userMessage: agentGoalRef.current,
+          elements: state.elements || [],
+          pageUrl: state.url || '',
+          pageTitle: state.title || '',
+          history: agentHistoryRef.current,
+          stepMode: true,
+        }),
+      }).then(r => r.json())
+
+      if (aiRes.isDone || aiRes.tasks?.length === 0) {
+        agentActiveRef.current = false
+        setMessages(prev => [...prev, {
+          id: `msg-${Date.now()}`,
+          type: 'message',
+          role: 'agent',
+          message: `✅ Done! ${aiRes.text || 'Goal accomplished.'}`,
+        }])
+        return
+      }
+
+      if (aiRes.tasks?.length > 0) {
+        const planId = `plan-${Date.now()}`
+        const planTasks = aiRes.tasks.map((t: any, i: number) => ({
+          ...t,
+          id: `task-${Date.now()}-${i}`,
+          status: 'pending',
+        }))
+        setMessages(prev => [...prev, {
+          id: `msg-${Date.now()}`,
+          type: 'message',
+          role: 'agent',
+          message: aiRes.text || 'Next step...',
+        }])
+        setMessages(prev => [...prev, { id: planId, type: 'plan', tasks: planTasks }])
+      }
+    } catch (err: any) {
+      console.error('[AgentLoop] error:', err.message)
+      agentActiveRef.current = false
+    }
+  }, [browserApi])
+
   // ── Plan task approval (for inline PlanCard) ────────────
   const approvePlanTask = useCallback(async (planId: string, taskId: string) => {
     const planMsg = messagesRef.current.find(m => m.id === planId)
@@ -1785,8 +1870,20 @@ ${currentInput}`
       }])
     })
 
-    updatePlanTask(planId, taskId, result.status === 'success' ? 'done' : 'failed')
-  }, [updatePlanTask])
+    const finalStatus = result.status === 'success' ? 'done' : 'failed'
+    updatePlanTask(planId, taskId, finalStatus)
+
+    // After success, check if all tasks in this plan are done → continue agent loop
+    if (agentActiveRef.current && result.status === 'success') {
+      const currentPlan = messagesRef.current.find(m => m.id === planId)
+      const allPlanTasksDone = currentPlan?.tasks?.every((t: any) =>
+        t.id === taskId || t.status === 'done' || t.status === 'failed' || t.status === 'skipped'
+      )
+      if (allPlanTasksDone) {
+        await continueAgentLoop(task.description)
+      }
+    }
+  }, [updatePlanTask, continueAgentLoop])
 
   const autoExecuteLoop = useCallback(async (taskQueue: any[], planMsgId?: string) => {
     if (autoExecutingRef.current) return

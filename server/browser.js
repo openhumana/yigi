@@ -198,20 +198,37 @@ async function tryRevealSearchInput() {
   return false
 }
 
+// Human-like typing: character by character with natural randomized delays
+async function humanTypeTo(element, text) {
+  await element.scrollIntoViewIfNeeded().catch(() => {})
+  await element.click({ force: true }).catch(() => {})
+  await page.waitForTimeout(200)
+  // Clear existing content first
+  await element.fill('', { timeout: 3000 }).catch(async () => {
+    await page.keyboard.press('Control+a')
+    await page.waitForTimeout(100)
+    await page.keyboard.press('Delete')
+  })
+  await page.waitForTimeout(150)
+  // Type character by character
+  for (const char of text) {
+    await page.keyboard.type(char)
+    // Realistic inter-keystroke delay: 40-120ms, occasional longer pause (punctuation / spaces)
+    let delay = 40 + Math.random() * 80
+    if (char === ' ') delay += Math.random() * 80
+    if (char === ',' || char === '.') delay += Math.random() * 120
+    if (Math.random() < 0.06) delay += 200 + Math.random() * 400 // thinking pause
+    await page.waitForTimeout(delay)
+  }
+}
+
 // Robust type: try selector list with fill, fall back to keyboard
 async function robustType(selector, value) {
   const selectors = selector ? buildSelectorVariants(selector) : []
   // Use 1500ms per selector so 10 variants = max 15s total (but deadline stops it at 8s)
   let el = await findElement(selectors, 8000, 1500)
   if (el) {
-    await el.scrollIntoViewIfNeeded().catch(() => {})
-    await el.click({ timeout: 5000, force: true }).catch(() => {})
-    await page.waitForTimeout(300)
-    await el.fill(value || '', { timeout: 8000 }).catch(async () => {
-      await el.type(value || '', { delay: 30 }).catch(async () => {
-        await page.keyboard.type(value || '', { delay: 30 })
-      })
-    })
+    await humanTypeTo(el, value || '')
     return
   }
 
@@ -230,14 +247,7 @@ async function robustType(selector, value) {
   ]
   el = await findElement(inputSelectors, 6000, 1000)
   if (el) {
-    await el.scrollIntoViewIfNeeded().catch(() => {})
-    await el.click({ force: true }).catch(() => {})
-    await page.waitForTimeout(300)
-    await el.fill(value || '', { timeout: 8000 }).catch(async () => {
-      await el.type(value || '', { delay: 30 }).catch(async () => {
-        await page.keyboard.type(value || '', { delay: 30 })
-      })
-    })
+    await humanTypeTo(el, value || '')
     return
   }
 
@@ -397,28 +407,68 @@ app.post('/api/browser/eval', async (req, res) => {
   }
 })
 
-// ── Groq AI endpoint — real task planning from page elements ──────────────
+// ── Groq AI endpoint — reactive step-by-step agent planning ──────────────
 app.post('/api/browser/ai', async (req, res) => {
-  const { userMessage, elements, pageUrl, pageTitle } = req.body
+  const { userMessage, elements, pageUrl, pageTitle, goal, history, stepMode } = req.body
   const groqKey = process.env.DEFAULT_GROQ_KEY
   if (!groqKey) {
-    return res.json({ text: 'Groq key not configured.', tasks: [], model: '' })
+    return res.json({ text: 'Groq key not configured.', tasks: [], isDone: false, model: '' })
   }
 
-  const elementList = (elements || []).slice(0, 50).map(el =>
-    `[${el.tag}] text="${el.text}" selector="${el.selector}"${el.ariaLabel ? ` aria="${el.ariaLabel}"` : ''}${el.placeholder ? ` placeholder="${el.placeholder}"` : ''}`
+  const elementList = (elements || []).slice(0, 60).map((el, i) =>
+    `${i + 1}. [${el.tag}] "${el.text || el.ariaLabel || el.placeholder || ''}" → selector: "${el.selector}"${el.placeholder ? ` placeholder="${el.placeholder}"` : ''}${el.ariaLabel ? ` aria="${el.ariaLabel}"` : ''} (x:${el.x} y:${el.y})`
   ).join('\n')
 
-  const systemPrompt = `You are Yogi, an AI browser automation agent. The user wants you to perform tasks in their browser.
+  const noElements = !elements || elements.length === 0
 
-Current page: ${pageTitle || ''} — ${pageUrl || ''}
+  // In stepMode (reactive loop): plan only 1-2 next actions based on current screen
+  const systemPrompt = stepMode ? `You are Yogi, an AI browser automation agent working step-by-step like a human.
 
-Interactive elements on page (use these exact selectors):
-${elementList || 'No elements detected yet. Use navigate action to load a page.'}
+GOAL: ${goal || userMessage}
+
+STEPS COMPLETED SO FAR:
+${(history || []).length > 0 ? (history || []).map((h, i) => `${i + 1}. ${h}`).join('\n') : '(none yet — just starting)'}
+
+WHAT YOU SEE NOW:
+Page: "${pageTitle || 'unknown'}" — ${pageUrl || 'about:blank'}
+${noElements ? 'No elements detected on screen yet.' : `${elements.length} interactive elements visible:\n${elementList}`}
+
+Based on what you see NOW, decide the NEXT 1-2 actions to make progress toward the goal.
+Think like a human: what would you look at and click or type next?
+
+RULES:
+- Only plan 1-2 actions maximum
+- Only use selectors from the elements list above for dom_click/dom_type
+- If you need a hidden element (like a search bar), first dom_click on whatever opens it
+- After clicking a link or pressing Enter, the next step will see the new page — don't pre-plan it now
+- If the goal looks accomplished based on the current page, set isDone: true
+- SMART NAVIGATION: If the current page doesn't have what you need but you know where it is (e.g., careers.humana.com, google.com, etc.), use "navigate" with a direct URL instead of clicking around — it's faster and more reliable
+- For job searches, go directly to the company's careers site (e.g., careers.humana.com) rather than exploring from the homepage
+- If you find yourself on a Google search results page, look for the actual link to click
+
+Respond with JSON only:
+{
+  "thought": "What I see on screen and what I will do next",
+  "isDone": false,
+  "tasks": [
+    {
+      "action": "navigate|dom_click|dom_type|dom_press_enter|scroll",
+      "description": "Human-readable description of this step",
+      "payload": { "url": "...", "selector": "...", "value": "...", "deltaY": 400 }
+    }
+  ]
+}` : `You are Yogi, an AI browser automation agent.
+
+Current page: "${pageTitle || 'unknown'}" — ${pageUrl || 'about:blank'}
+
+${noElements ? 'No elements detected on screen yet. Start with a navigate action.' : `Interactive elements visible on page:\n${elementList}`}
+
+Plan the next 1-3 browser actions to accomplish the user's request.
 
 Respond with JSON only:
 {
   "thought": "Brief explanation of what you will do",
+  "isDone": false,
   "tasks": [
     {
       "action": "navigate|dom_click|dom_type|dom_press_enter|scroll",
@@ -430,12 +480,12 @@ Respond with JSON only:
 
 Action types:
 - navigate: go to a URL (payload.url)
-- dom_click: click an element using selector from the elements list above (payload.selector)
-- dom_type: type text into element using selector from elements list (payload.selector, payload.value)
-- dom_press_enter: press Enter in element (payload.selector from elements list)
+- dom_click: click an element (payload.selector from elements list)
+- dom_type: type text into element (payload.selector, payload.value) — uses human-like typing
+- dom_press_enter: press Enter (payload.selector)
 - scroll: scroll page (payload.deltaY)
 
-IMPORTANT: Always use selectors from the elements list above. If the element you need is not in the list, use navigate to go to a different page or use dom_click on a visible button to reveal hidden elements first.`
+IMPORTANT: Only use selectors from the elements list. If needed element is not visible, click a button to reveal it first.`
 
   try {
     const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -448,25 +498,28 @@ IMPORTANT: Always use selectors from the elements list above. If the element you
         model: 'llama-3.3-70b-versatile',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
+          { role: 'user', content: goal || userMessage },
         ],
-        max_tokens: 1000,
-        temperature: 0.2,
+        max_tokens: 800,
+        temperature: 0.1,
         response_format: { type: 'json_object' },
       }),
     })
     const data = await resp.json()
     const raw = data.choices?.[0]?.message?.content || '{}'
-    let parsed = { thought: '', tasks: [] }
+    let parsed = { thought: '', tasks: [], isDone: false }
     try { parsed = JSON.parse(raw) } catch {}
+    // Enforce max 2 tasks in stepMode
+    const tasks = stepMode ? (parsed.tasks || []).slice(0, 2) : (parsed.tasks || []).slice(0, 5)
     res.json({
       text: parsed.thought || 'Ready.',
-      tasks: parsed.tasks || [],
+      tasks,
+      isDone: parsed.isDone || false,
       model: data.model || 'groq',
     })
   } catch (err) {
     console.error('[BrowserServer] AI error:', err.message)
-    res.json({ text: `AI error: ${err.message}`, tasks: [], model: '' })
+    res.json({ text: `AI error: ${err.message}`, tasks: [], isDone: false, model: '' })
   }
 })
 
