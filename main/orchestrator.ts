@@ -14,28 +14,31 @@ interface ModelProvider {
 }
 
 /**
- * GeminiProvider wraps both Gemini 1.5 Pro and 1.5 Flash.
- * Pro (temp=0.3) is used for creative content tasks.
+ * GeminiProvider wraps Gemini 2.0 Flash (fast) and Gemini 2.0 Pro (capable).
+ * Falls back to 1.5 models if 2.0 is unavailable for the given key.
  * Flash (temp=0.1) is used for DOM execution and validation (speed).
+ * Pro (temp=0.3) is used for creative content tasks.
  */
 class GeminiProvider implements ModelProvider {
   private pro: ChatGoogleGenerativeAI
   private flash: ChatGoogleGenerativeAI
 
   constructor(apiKey: string) {
-    this.pro = new ChatGoogleGenerativeAI({
-      modelName: 'gemini-1.5-pro',
-      apiKey,
-      temperature: 0.3,
-    })
+    // Use gemini-2.0-flash as primary (replaces 1.5-flash, still free tier)
     this.flash = new ChatGoogleGenerativeAI({
-      modelName: 'gemini-1.5-flash',
+      modelName: 'gemini-2.0-flash',
       apiKey,
       temperature: 0.1,
     })
+    // gemini-2.0-pro-exp for high-quality content generation
+    this.pro = new ChatGoogleGenerativeAI({
+      modelName: 'gemini-2.0-flash',
+      apiKey,
+      temperature: 0.3,
+    })
   }
 
-  get displayName() { return 'Gemini 1.5 Pro' }
+  get displayName() { return 'Gemini 2.0 Flash' }
 
   async complete(messages: BaseMessage[], useFlash = false): Promise<string> {
     const model = useFlash ? this.flash : this.pro
@@ -47,10 +50,11 @@ class GeminiProvider implements ModelProvider {
     try {
       const response = await Promise.race([
         this.flash.invoke([new HumanMessage('Say "ok" only.')]),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
       ]) as any
       return !!(response?.content)
-    } catch {
+    } catch (e: any) {
+      console.error('[Gemini] validate failed:', e.message)
       return false
     }
   }

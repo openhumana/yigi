@@ -190,13 +190,10 @@ ipcMain.handle('terminal-exec', async (_, { command }) => {
 // ── EYES: Scan the webview for interactive elements ──────────────────────────
 ipcMain.handle('get-browser-state', async () => {
   try {
-    const { webContents } = require('electron')
-    const allWc = webContents.getAllWebContents()
-    const webview = allWc.find((wc: any) => wc.getType() === 'webview')
+    const wc = getWebview()
+    if (!wc) return { status: 'error', message: 'Browser panel not open yet', elements: [] }
 
-    if (!webview) return { status: 'error', message: 'Webview not attached yet', elements: [] }
-
-    const elements = await webview.executeJavaScript(`
+    const elements = await wc.executeJavaScript(`
       (() => {
         const nodes = Array.from(document.querySelectorAll(
           'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="menuitem"]'
