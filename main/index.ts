@@ -236,41 +236,62 @@ ipcMain.handle('get-browser-state', async () => {
 })
 
 // ── HANDS: Execute a DOM action inside the webview ───────────────────────────
+// Helper: delay for human-like timing
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 ipcMain.handle('dom-action', async (_, { selector, action, value }) => {
   try {
-    const { webContents } = require('electron')
-    const allWc = webContents.getAllWebContents()
-    const webview = allWc.find((wc: any) => wc.getType() === 'webview')
-
-    if (!webview) return { status: 'error', message: 'Webview not attached yet' }
+    // Use BrowserView webContents (the actual browser panel), falling back to webview tag
+    const wc = getWebview()
+    if (!wc) return { status: 'error', message: 'Browser panel not open yet — navigate to a page first' }
 
     const safeSelector = String(selector).replace(/"/g, '\\"')
-    const safeValue = String(value || '').replace(/`/g, '\\`').replace(/\\/g, '\\\\')
+    const safeValue = String(value || '')
 
     if (action === 'dom_click') {
       const script = `
         (() => {
           const el = document.querySelector("${safeSelector}");
           if (!el) throw new Error("Selector not found: ${safeSelector}");
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
           el.focus();
           el.click();
           return true;
         })()
       `
-      await webview.executeJavaScript(script)
+      await wc.executeJavaScript(script)
+
     } else if (action === 'dom_type') {
-      const script = `
+      // Step 1: focus the element and clear it
+      const escapedSelector = safeSelector.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      await wc.executeJavaScript(`
         (() => {
-          const el = document.querySelector("${safeSelector}");
-          if (!el) throw new Error("Selector not found: ${safeSelector}");
+          const el = document.querySelector("${escapedSelector}");
+          if (!el) throw new Error("Selector not found: ${escapedSelector}");
           el.focus();
-          el.value = \`${safeValue}\`;
+          el.value = '';
           el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
           return true;
         })()
-      `
-      await webview.executeJavaScript(script)
+      `)
+
+      // Step 2: type character-by-character via sendInputEvent (human-like)
+      for (const char of safeValue) {
+        const delay = 40 + Math.floor(Math.random() * 80)
+        // Space and punctuation get extra pause
+        const extra = (char === ' ' || '.,:;!?'.includes(char)) ? Math.floor(Math.random() * 120) : 0
+        // Rare longer thinking pause
+        const thinking = Math.random() < 0.06 ? 200 + Math.floor(Math.random() * 300) : 0
+
+        wc.sendInputEvent({ type: 'keyDown', keyCode: char })
+        wc.sendInputEvent({ type: 'char', keyCode: char })
+        wc.sendInputEvent({ type: 'keyUp', keyCode: char })
+        await sleep(delay + extra + thinking)
+      }
+
+    } else if (action === 'dom_scroll') {
+      await wc.executeJavaScript(`window.scrollBy({ top: ${Number(value) || 400}, behavior: 'smooth' })`)
+
     } else {
       return { status: 'error', message: `Unknown action: ${action}` }
     }
